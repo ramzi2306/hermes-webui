@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  agent:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-agent
+    restart: unless-stopped
+    command: gateway run
+    volumes:
+      - agent-data:/opt/data
+    environment:
+      - HERMES_HOME=/opt/data
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+    networks:
+      - hermes-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8642/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hermes-webui
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - webui-data:/home/hermeswebui/.hermes
+    environment:
+      - HERMES_WEBUI_HOST=0.0.0.0
+      - HERMES_WEBUI_PORT=8787
+      - HERMES_WEBUI_STATE_DIR=/home/hermeswebui/.hermes/webui
+      - HERMES_AGENT_URL=http://agent:8642
+      - HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD}
+      - HERMES_SKIP_CHMOD=1
+    networks:
+      - hermes-net
+    depends_on:
+      agent:
+        condition: service_healthy
+
+volumes:
+  agent-data:
+  webui-data:
+
+networks:
+  hermes-net:
+    driver: bridge
