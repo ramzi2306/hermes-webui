@@ -6,21 +6,18 @@ services:
     container_name: hermes-agent
     restart: unless-stopped
     command: gateway run
+    ports:
+      - "8642:8642"
     volumes:
       - agent-data:/opt/data
     environment:
       - HERMES_HOME=/opt/data
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - KIMI_API_KEY=${KIMI_API_KEY}
     networks:
       - hermes-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8642/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
 
   webui:
     build:
@@ -42,12 +39,13 @@ services:
     networks:
       - hermes-net
     depends_on:
-      agent:
-        condition: service_healthy
+      - agent
 
 volumes:
   agent-data:
+    driver: local
   webui-data:
+    driver: local
 
 networks:
   hermes-net:
