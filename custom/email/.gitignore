@@ -1,4 +1,0 @@
-# Email secrets — never commit
-custom/email/himalaya_config.toml
-email_accounts.json
-*.toml.local

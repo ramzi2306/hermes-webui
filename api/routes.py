@@ -3940,15 +3940,6 @@ def handle_get(handler, parsed) -> bool:
         except Exception as exc:
             return _serve_shell_unavailable(handler, exc)
 
-    # ── Custom extensions (isolated in custom/ directory) ──────────────────
-    try:
-        from custom.loader import handle_custom_get
-        if handle_custom_get(parsed, handler, j, bad):
-            return True
-    except Exception:
-        pass
-    # ───────────────────────────────────────────────────────────────────────
-
     if parsed.path == "/login":
         _settings = load_settings()
         _bn = _html.escape(_settings.get("bot_name") or "Hermes")
@@ -6874,15 +6865,6 @@ def handle_post(handler, parsed) -> bool:
         except Exception as e:
             logger.exception("rollback/restore failed")
             return bad(handler, str(e), status=500)
-
-    # ── Custom extensions (isolated in custom/ directory) ──────────────────
-    try:
-        from custom.loader import handle_custom_post
-        if handle_custom_post(parsed, handler, body, j, bad):
-            return True
-    except Exception:
-        pass
-    # ───────────────────────────────────────────────────────────────────────
 
     return False  # 404
 

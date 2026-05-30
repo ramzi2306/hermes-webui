@@ -39,9 +39,7 @@ def safe_resolve(root: Path, requested: str) -> Path:
 def _security_headers(handler):
     """Add security headers to every response."""
     handler.send_header('X-Content-Type-Options', 'nosniff')
-    # SAMEORIGIN (not DENY) so the app can embed its own chat in the email panel.
-    # Still blocks cross-origin framing → same clickjacking protection.
-    handler.send_header('X-Frame-Options', 'SAMEORIGIN')
+    handler.send_header('X-Frame-Options', 'DENY')
     handler.send_header('Referrer-Policy', 'same-origin')
     handler.send_header(
         'Content-Security-Policy',
