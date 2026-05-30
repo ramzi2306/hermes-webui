@@ -1,24 +1,6 @@
 version: "3.8"
 
 services:
-  agent:
-    image: nousresearch/hermes-agent:latest
-    container_name: hermes-agent
-    restart: unless-stopped
-    command: gateway run
-    ports:
-      - "8642:8642"
-    volumes:
-      - agent-data:/opt/data
-    environment:
-      - HERMES_HOME=/opt/data
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - KIMI_API_KEY=${KIMI_API_KEY}
-    networks:
-      - hermes-net
-
   webui:
     build:
       context: .
@@ -33,20 +15,10 @@ services:
       - HERMES_WEBUI_HOST=0.0.0.0
       - HERMES_WEBUI_PORT=8787
       - HERMES_WEBUI_STATE_DIR=/home/hermeswebui/.hermes/webui
-      - HERMES_AGENT_URL=http://agent:8642
+      - HERMES_AGENT_URL=http://hermesstack-hermesagent-1qi1ft:8642
       - HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD}
       - HERMES_SKIP_CHMOD=1
-    networks:
-      - hermes-net
-    depends_on:
-      - agent
 
 volumes:
-  agent-data:
-    driver: local
   webui-data:
     driver: local
-
-networks:
-  hermes-net:
-    driver: bridge
