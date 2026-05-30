@@ -1,5 +1,5 @@
 """Tool handlers — code that runs when Hermes calls an email tool."""
-import sys, os
+import sys, os, tempfile, subprocess, json as _json
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _WEBUI_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
@@ -7,7 +7,54 @@ if _WEBUI_ROOT not in sys.path:
     sys.path.insert(0, _WEBUI_ROOT)
 
 
-# ── Himalaya wrapper ──────────────────────────────────────────────────────────
+# ── Dynamic Himalaya config generator ────────────────────────────────────────
+
+def _build_himalaya_config(account: dict) -> str:
+    """Generate Himalaya TOML config dynamically from stored account data."""
+    name = account.get("email", "").split("@")[0]
+    return f"""
+[accounts.{name}]
+default = true
+email = "{account['email']}"
+display-name = "{account.get('name', 'Ramzi')}"
+
+backend.type = "imap"
+backend.host = "{account['imap_host']}"
+backend.port = {account.get('imap_port', 993)}
+backend.encryption.type = "tls"
+backend.auth.type = "password"
+backend.auth.raw = "{account['password']}"
+
+message.send.backend.type = "smtp"
+message.send.backend.host = "{account['smtp_host']}"
+message.send.backend.port = {account.get('smtp_port', 587)}
+message.send.backend.encryption.type = "start-tls"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.raw = "{account['password']}"
+""".strip()
+
+
+def _run_himalaya(account: dict, args: list) -> tuple[bool, str]:
+    """Run himalaya with a dynamically generated config for this account."""
+    config_content = _build_himalaya_config(account)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        f.write(config_content)
+        config_path = f.name
+    try:
+        result = subprocess.run(
+            ["himalaya", "--config", config_path] + args,
+            capture_output=True, text=True, timeout=30
+        )
+        return result.returncode == 0, result.stdout if result.returncode == 0 else result.stderr
+    except FileNotFoundError:
+        return False, "himalaya not installed"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        os.unlink(config_path)
+
+
+# ── Account tools ─────────────────────────────────────────────────────────────
 
 def email_list_accounts(**_) -> list:
     from custom.email.handler import load_email_accounts
@@ -15,25 +62,25 @@ def email_list_accounts(**_) -> list:
 
 
 def email_fetch_inbox(account_email: str, folder: str = "INBOX", limit: int = 50, **_) -> list:
-    """Fetch emails — tries Himalaya first, falls back to IMAP handler."""
-    import subprocess, json as _json
-    try:
-        result = subprocess.run(
-            ["himalaya", "--account", account_email.split("@")[0],
-             "envelope", "list", "--folder", folder,
-             "--page-size", str(limit), "--output", "json"],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            return _json.loads(result.stdout)
-    except Exception:
-        pass
-    # Fallback to direct IMAP
+    """Fetch emails — uses dynamic Himalaya config, falls back to IMAP handler."""
     from custom.email.handler import load_email_accounts, fetch_emails
     accounts = load_email_accounts()
     account = next((a for a in accounts if a["email"] == account_email), None)
     if not account:
-        return [{"error": f"Account {account_email} not found"}]
+        return [{"error": f"Account '{account_email}' not found. Add it in WebUI Email Settings."}]
+
+    # Try Himalaya with dynamic config
+    ok, output = _run_himalaya(account, [
+        "envelope", "list", "--folder", folder,
+        "--page-size", str(limit), "--output", "json"
+    ])
+    if ok:
+        try:
+            return _json.loads(output)
+        except Exception:
+            pass
+
+    # Fallback: direct IMAP
     return fetch_emails(account, folder, limit)
 
 
@@ -42,10 +89,10 @@ def email_send(account_email: str, to: str, subject: str, body: str, reply_to_id
     accounts = load_email_accounts()
     account = next((a for a in accounts if a["email"] == account_email), None)
     if not account:
-        return {"error": f"Account {account_email} not found"}
+        return {"error": f"Account '{account_email}' not found. Add it in WebUI Email Settings."}
     try:
         send_email(account, to=to, subject=subject, body=body, reply_to_message_id=reply_to_id)
-        return {"ok": True, "sent_to": to}
+        return {"ok": True, "sent_to": to, "subject": subject}
     except Exception as e:
         return {"error": str(e)}
 
