@@ -289,58 +289,87 @@ def _profile_home(profile: str) -> Optional[str]:
     return str(candidate) if candidate.exists() else None
 
 
-def _run_hermes(prompt: str, profile: str = None, timeout: int = 90) -> str:
+def _run_hermes(prompt: str, profile: str = None, timeout: int = 90,
+                system_message: str = "You are Ramzi's email assistant.") -> str:
     """
-    Ask the agent a one-shot question.
-    Primary path: HTTP POST to the agent's OpenAI-compatible gateway
-    (HERMES_AGENT_URL, default http://hermes-agent:8642).
-    Fallback: in-process subprocess.
+    Ask the agent a one-shot question using the webui's IN-PROCESS AIAgent
+    (the same path the main webui chat uses — guaranteed to work in-container).
+    On failure, returns a diagnostic string prefixed with ⚠️ so it's visible.
     """
-    # ── 1. HTTP gateway (the running agent with its tools/profile) ──
+    errors = []
+
+    # ── Primary: in-process AIAgent.run_conversation ──
+    try:
+        import uuid
+        from api.config import (
+            get_effective_default_model,
+            resolve_model_provider,
+            resolve_custom_provider_connection,
+        )
+        from run_agent import AIAgent
+
+        model, provider, base_url = resolve_model_provider(get_effective_default_model())
+        api_key = None
+        try:
+            from api.oauth import resolve_runtime_provider_with_anthropic_env_lock
+            from hermes_cli.runtime_provider import resolve_runtime_provider
+            rt = resolve_runtime_provider_with_anthropic_env_lock(
+                resolve_runtime_provider, requested=provider)
+            api_key = rt.get("api_key")
+            if not provider:
+                provider = rt.get("provider")
+            if not base_url:
+                base_url = rt.get("base_url")
+        except Exception as e:
+            errors.append(f"runtime-provider: {e}")
+        if isinstance(provider, str) and provider.startswith("custom:"):
+            ck, cb = resolve_custom_provider_connection(provider)
+            api_key = api_key or ck
+            base_url = base_url or cb
+
+        agent = AIAgent(
+            model=model, provider=provider, base_url=base_url, api_key=api_key,
+            platform="webui", quiet_mode=True, enabled_toolsets=[],
+            session_id=f"email-{uuid.uuid4().hex[:8]}",
+        )
+        result = agent.run_conversation(
+            user_message=prompt,
+            system_message=system_message,
+            conversation_history=[],
+            task_id=f"email-{uuid.uuid4().hex[:8]}",
+        )
+        out = str(result.get("final_response") or "").strip()
+        if out:
+            return out
+        errors.append("in-process agent returned empty")
+    except Exception as e:
+        errors.append(f"in-process AIAgent: {e}")
+
+    # ── Fallback: HTTP gateway ──
     base = os.getenv("HERMES_AGENT_URL", "http://hermes-agent:8642").rstrip("/")
     try:
         import urllib.request
         payload = json.dumps({
             "model": os.getenv("HERMES_EMAIL_MODEL", "deepseek-v4-pro"),
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "system", "content": system_message},
+                         {"role": "user", "content": prompt}],
             "stream": False,
         }).encode()
-        for path in ("/v1/chat/completions", "/chat/completions"):
-            try:
-                req = urllib.request.Request(
-                    base + path, data=payload,
-                    headers={"Content-Type": "application/json"}, method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=timeout) as r:
-                    data = json.loads(r.read().decode("utf-8"))
-                    choices = data.get("choices") or []
-                    if choices:
-                        msg = choices[0].get("message", {}).get("content", "")
-                        if msg.strip():
-                            return msg.strip()
-            except Exception:
-                continue
-    except Exception:
-        pass
+        req = urllib.request.Request(
+            base + "/v1/chat/completions", data=payload,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+            choices = data.get("choices") or []
+            if choices:
+                msg = choices[0].get("message", {}).get("content", "")
+                if msg.strip():
+                    return msg.strip()
+        errors.append("HTTP gateway returned no content")
+    except Exception as e:
+        errors.append(f"HTTP gateway: {e}")
 
-    # ── 2. Fallback: subprocess CLI ──
-    try:
-        import subprocess, sys
-        env = dict(os.environ)
-        profile = profile or _email_settings().get("profile", "collab-manager")
-        phome = _profile_home(profile)
-        if phome:
-            env["HERMES_HOME"] = phome
-        result = subprocess.run(
-            [sys.executable, "-m", "hermes", "-q", prompt],
-            capture_output=True, text=True, timeout=timeout,
-            cwd=str(Path.home()), env=env,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return ""
+    return "⚠️ Agent unavailable. " + " | ".join(errors[:3])
 
 
 def _format_thread(thread: list) -> str:

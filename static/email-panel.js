@@ -82,6 +82,7 @@
     if (list) list.scrollTop = prevScroll;
     const chatBody = document.getElementById("ep3-chat-body");
     if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
+    resizeFrames(document.getElementById("ep3-conversation"));
   }
 
   // Select a thread WITHOUT a full re-render (preserves queue scroll & focus)
@@ -102,6 +103,7 @@
       right.replaceWith(tmp.firstElementChild);
     }
     attachChatEvents();
+    resizeFrames(document.getElementById("ep3-conversation"));
   }
 
   function renderQueue() {
@@ -187,31 +189,43 @@
       </div>`;
   }
 
-  // Render email body — HTML in sandboxed iframe, else clean plain text
+  // Render email body — HTML in sandboxed iframe (allow-same-origin so we can
+  // measure height; NO allow-scripts so embedded JS can't run), else plain text.
   function renderEmailBody(e, idx) {
     const html = e.body_html;
     if (html && html.length > 20) {
-      const id = `ep3-frame-${e.id?.replace(/[^a-z0-9]/gi, "")}-${idx}`;
-      // Sandboxed iframe: no scripts, no same-origin. Auto-height via onload.
+      const fid = `epf-${(e.id || "").replace(/[^a-z0-9]/gi, "")}-${idx}`;
       const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
-        body{margin:0;padding:4px 2px;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;word-break:break-word;overflow-x:hidden;}
-        img{max-width:100%;height:auto;} a{color:#0a66c2;} table{max-width:100%;} *{max-width:100%;box-sizing:border-box;}
+        html,body{margin:0;padding:0;}
+        body{padding:2px;font:13px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;word-break:break-word;overflow-x:hidden;background:#fff;}
+        img{max-width:100%!important;height:auto!important;} a{color:#0a66c2;}
+        table{max-width:100%!important;width:auto!important;} td,tr{max-width:100%;}
+        *{max-width:100%!important;box-sizing:border-box;}
       </style></head><body>${html}</body></html>`;
       const srcdoc = doc.replace(/"/g, "&quot;");
-      return `<iframe class="ep3-html-frame" id="${id}" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}" onload="window.__ep3FrameResize&&window.__ep3FrameResize(this)"></iframe>`;
+      return `<iframe class="ep3-html-frame" id="${fid}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}"></iframe>`;
     }
-    // Plain text — normalize excessive blank lines
     const txt = (e.body || "").replace(/\n{3,}/g, "\n\n").trim();
     return `<div class="ep3-bubble-body">${esc(txt).replace(/\n/g, "<br>")}</div>`;
   }
 
-  // Auto-resize HTML iframes to content height
-  window.__ep3FrameResize = function (frame) {
-    try {
-      const h = frame.contentWindow.document.body.scrollHeight;
-      frame.style.height = Math.min(h + 8, 600) + "px";
-    } catch { frame.style.height = "200px"; }
-  };
+  // Auto-resize all HTML iframes in the thread view to their content height
+  function resizeFrames(root) {
+    (root || document).querySelectorAll(".ep3-html-frame").forEach(frame => {
+      const doResize = () => {
+        try {
+          const b = frame.contentWindow.document.body;
+          const h = Math.max(b.scrollHeight, b.offsetHeight);
+          frame.style.height = Math.min(h + 6, 700) + "px";
+        } catch { frame.style.height = "260px"; }
+      };
+      if (frame.contentWindow?.document?.readyState === "complete") doResize();
+      else frame.addEventListener("load", doResize, { once: true });
+      // Re-measure after images load
+      setTimeout(doResize, 300);
+      setTimeout(doResize, 1000);
+    });
+  }
 
   function renderAgentChat() {
     const t = S.threads.find(x => x.id === S.activeThread);

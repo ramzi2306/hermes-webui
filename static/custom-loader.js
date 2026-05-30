@@ -113,6 +113,8 @@
     isOpen ? closeOverlay(id) : openOverlay(id);
   }
 
+  let _savedActive = [];  // built-in buttons that were active before opening overlay
+
   function openOverlay(id) {
     document.querySelectorAll("[data-overlay]").forEach(el => el.style.display = "none");
     const overlay = document.getElementById(`overlay-${id}`);
@@ -122,11 +124,15 @@
     let railW = 0;
     if (rail) {
       const r = rail.getBoundingClientRect();
-      // Only offset on desktop where the rail is a vertical bar on the left
       if (r.width > 0 && r.width < 120 && r.left < 10) railW = r.width;
     }
     overlay.style.left = railW ? railW + "px" : "0";
     overlay.style.display = "flex";
+    // Remove 'active' from every built-in nav button, remember which were active
+    _savedActive = [];
+    document.querySelectorAll('.nav-tab.active, .rail-btn.active').forEach(b => {
+      if (!b.hasAttribute("data-custom-ext")) { _savedActive.push(b); b.classList.remove("active"); }
+    });
     document.querySelectorAll(`[data-custom-ext="${id}"]`).forEach(b => b.classList.add("active"));
     const ext = CUSTOM_EXTENSIONS.find(e => e.id === id);
     if (ext && ext.onActivate) setTimeout(() => ext.onActivate(), 60);
@@ -136,6 +142,9 @@
     const overlay = document.getElementById(`overlay-${id}`);
     if (overlay) overlay.style.display = "none";
     document.querySelectorAll(`[data-custom-ext="${id}"]`).forEach(b => b.classList.remove("active"));
+    // Restore the built-in panel's highlight
+    _savedActive.forEach(b => b.classList.add("active"));
+    _savedActive = [];
   }
 
   function injectScript(src) {
@@ -177,6 +186,7 @@
         // leaving for a built-in panel → hide every custom overlay
         document.querySelectorAll("[data-overlay]").forEach(el => el.style.display = "none");
         document.querySelectorAll("[data-custom-ext]").forEach(b => b.classList.remove("active"));
+        _savedActive = [];  // built-in switchPanel will set its own active
       }
       return original.apply(this, arguments);
     };
