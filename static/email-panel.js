@@ -13,8 +13,23 @@
     emails: [],
     activeEmail: null,
     loading: false,
-    drafts: {}, // emailId -> draft text
+    drafts: {},
+    filter: "all", // "all" | "favorites"
   };
+
+  // ─── Favorites (persisted in localStorage) ───────────────────────────────
+  const FAVS_KEY = "hermes_email_favorites";
+  function getFavorites() {
+    try { return JSON.parse(localStorage.getItem(FAVS_KEY) || "{}"); } catch { return {}; }
+  }
+  function toggleFavorite(emailId) {
+    const favs = getFavorites();
+    if (favs[emailId]) delete favs[emailId];
+    else favs[emailId] = true;
+    localStorage.setItem(FAVS_KEY, JSON.stringify(favs));
+    return !!favs[emailId];
+  }
+  function isFavorite(emailId) { return !!getFavorites()[emailId]; }
 
   // ─── API Helpers ─────────────────────────────────────────────────────────
   async function apiGet(path) {
@@ -71,6 +86,7 @@
         <div class="ep-sidebar">
           <div class="ep-sidebar-header">
             <span class="ep-title">✉ Mail</span>
+            <button class="ep-btn ep-btn-icon ${emailState.filter === 'favorites' ? 'ep-btn-active' : ''}" id="ep-favs-btn" title="Favorites only">★</button>
             <button class="ep-btn ep-btn-icon" id="ep-compose-btn" title="Compose">✏</button>
             <button class="ep-btn ep-btn-icon" id="ep-settings-btn" title="Settings">⚙</button>
           </div>
@@ -110,18 +126,32 @@
       return `<div class="ep-empty-list">No emails yet.<br>Select an account to load.</div>`;
     }
 
-    return emailState.emails.map(e => `
-      <div class="ep-email-item ${emailState.activeEmail?.id === e.id ? "active" : ""}"
-           data-id="${esc(e.id)}">
-        <div class="ep-avatar">${initials(e.from_name)}</div>
-        <div class="ep-email-meta">
-          <div class="ep-email-from">${esc(e.from_name || e.from_email)}</div>
-          <div class="ep-email-subject">${esc(e.subject)}</div>
-          <div class="ep-email-preview">${esc(e.preview)}</div>
+    const visible = emailState.filter === "favorites"
+      ? emailState.emails.filter(e => isFavorite(e.id))
+      : emailState.emails;
+
+    if (visible.length === 0 && emailState.filter === "favorites") {
+      return `<div class="ep-empty-list">No favorites yet.<br>Click ★ on any email to save it.</div>`;
+    }
+
+    return visible.map(e => {
+      const fav = isFavorite(e.id);
+      return `
+        <div class="ep-email-item ${emailState.activeEmail?.id === e.id ? "active" : ""}"
+             data-id="${esc(e.id)}">
+          <div class="ep-avatar">${initials(e.from_name)}</div>
+          <div class="ep-email-meta">
+            <div class="ep-email-from">${esc(e.from_name || e.from_email)}</div>
+            <div class="ep-email-subject">${esc(e.subject)}</div>
+            <div class="ep-email-preview">${esc(e.preview)}</div>
+          </div>
+          <div class="ep-email-right">
+            <div class="ep-email-time">${timeAgo(e.timestamp)}</div>
+            <button class="ep-star-btn ${fav ? "ep-star-active" : ""}" data-star="${esc(e.id)}" title="${fav ? "Remove favorite" : "Add to favorites"}">★</button>
+          </div>
         </div>
-        <div class="ep-email-time">${timeAgo(e.timestamp)}</div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
   }
 
   function renderEmptyState() {
@@ -244,6 +274,27 @@
 
   // ─── Event Handlers ───────────────────────────────────────────────────────
   function attachEmailPanelEvents() {
+    // Favorites filter toggle
+    document.getElementById("ep-favs-btn")?.addEventListener("click", () => {
+      emailState.filter = emailState.filter === "favorites" ? "all" : "favorites";
+      renderEmailPanel();
+    });
+
+    // Star buttons on email items
+    document.getElementById("ep-email-list")?.addEventListener("click", e => {
+      const starBtn = e.target.closest("[data-star]");
+      if (starBtn) {
+        e.stopPropagation();
+        const id = starBtn.dataset.star;
+        const nowFav = toggleFavorite(id);
+        starBtn.classList.toggle("ep-star-active", nowFav);
+        // Also update the favorites filter button
+        const favsBtn = document.getElementById("ep-favs-btn");
+        if (favsBtn && emailState.filter === "favorites") renderEmailPanel();
+        return;
+      }
+    });
+
     // Account chips
     document.querySelectorAll(".ep-account-chip").forEach(chip => {
       chip.addEventListener("click", async () => {

@@ -1,171 +1,159 @@
 /**
- * Custom Extension Loader for Hermes WebUI
- * Injects UI elements for all custom features WITHOUT modifying base files.
- * Add new features by extending CUSTOM_EXTENSIONS below.
- *
- * Base file changes required:
- *   - index.html: <script src="static/custom-loader.js" defer> (1 line)
- *   - panels.js:  'email' in panel arrays (2 lines)
+ * Custom Extension Loader — fixed full-screen overlay approach
+ * Covers entire viewport (rail + sidebar + main) when active
  */
-
 (function () {
   "use strict";
 
-  // ── Registry of all custom extensions ───────────────────────────────────
   const CUSTOM_EXTENSIONS = [
     {
       id: "email",
       label: "Mail",
       tooltip: "AI Mail Inbox",
-      // SVG envelope icon
-      icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
-      iconSm: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
+      icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
+      iconSm: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
       panelContent: `<div id="email-panel" style="height:100%;overflow:hidden;"></div>`,
-      onActivate: () => {
-        if (window.EmailPanel) window.EmailPanel.open();
-      },
+      onActivate: () => { if (window.EmailPanel) window.EmailPanel.open(); },
       scripts: ["static/email-panel.js"],
     },
-    // Add more extensions here in future:
-    // { id: "crm", label: "CRM", ... }
   ];
 
-  // ── Inject CSS ────────────────────────────────────────────────────────────
-  function injectCSS(css) {
-    const style = document.createElement("style");
-    style.textContent = css;
-    style.setAttribute("data-custom-loader", "true");
-    document.head.appendChild(style);
+  function addRailButton(ext) {
+    const rail = document.querySelector("nav.rail");
+    if (!rail || rail.querySelector(`[data-custom-ext="${ext.id}"]`)) return;
+    const spacer = rail.querySelector(".rail-spacer");
+    const btn = document.createElement("button");
+    btn.className = "rail-btn nav-tab has-tooltip";
+    btn.dataset.panel = ext.id;
+    btn.dataset.customExt = ext.id;
+    btn.setAttribute("data-tooltip", ext.tooltip || ext.label);
+    btn.setAttribute("aria-label", ext.label);
+    btn.innerHTML = ext.icon;
+    btn.addEventListener("click", () => toggleOverlay(ext.id));
+    if (spacer) rail.insertBefore(btn, spacer);
+    else rail.appendChild(btn);
   }
 
-  // ── Inject script ─────────────────────────────────────────────────────────
+  function addSidebarNavButton(ext) {
+    const nav = document.querySelector(".sidebar-nav");
+    if (!nav || nav.querySelector(`[data-custom-ext="${ext.id}"]`)) return;
+    const btn = document.createElement("button");
+    btn.className = "nav-tab has-tooltip has-tooltip--bottom";
+    btn.dataset.panel = ext.id;
+    btn.dataset.customExt = ext.id;
+    btn.dataset.label = ext.label;
+    btn.setAttribute("data-tooltip", ext.tooltip || ext.label);
+    btn.innerHTML = ext.iconSm || ext.icon;
+    btn.addEventListener("click", () => toggleOverlay(ext.id));
+    nav.appendChild(btn);
+  }
+
+  function createOverlay(ext) {
+    if (document.getElementById(`overlay-${ext.id}`)) return;
+
+    // Full-screen overlay — covers everything including rail + sidebar
+    const overlay = document.createElement("div");
+    overlay.id = `overlay-${ext.id}`;
+    overlay.setAttribute("data-overlay", ext.id);
+    overlay.style.cssText = `
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 9000;
+      background: var(--bg, #18181b);
+      flex-direction: column;
+      overflow: hidden;
+    `;
+
+    // Topbar
+    const topbar = document.createElement("div");
+    topbar.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      height: 46px;
+      border-bottom: 1px solid var(--border, #333);
+      background: var(--sidebar, #111);
+      flex-shrink: 0;
+    `;
+
+    const backBtn = document.createElement("button");
+    backBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Chat`;
+    backBtn.style.cssText = `
+      display: flex; align-items: center; gap: 6px;
+      background: none; border: none; cursor: pointer;
+      color: var(--muted, #888); padding: 6px 10px;
+      border-radius: 6px; font-size: 13px; font-weight: 500;
+    `;
+    backBtn.onmouseenter = () => backBtn.style.color = "var(--text, #fff)";
+    backBtn.onmouseleave = () => backBtn.style.color = "var(--muted, #888)";
+    backBtn.addEventListener("click", () => closeOverlay(ext.id));
+
+    const title = document.createElement("span");
+    title.textContent = "✉ " + ext.label;
+    title.style.cssText = "font-weight: 700; font-size: 15px; color: var(--text, #fff); flex: 1;";
+
+    topbar.appendChild(backBtn);
+    topbar.appendChild(title);
+
+    const body = document.createElement("div");
+    body.style.cssText = "flex: 1; overflow: hidden; display: flex; flex-direction: column;";
+    body.innerHTML = ext.panelContent || "";
+
+    overlay.appendChild(topbar);
+    overlay.appendChild(body);
+    document.body.appendChild(overlay);
+  }
+
+  function toggleOverlay(id) {
+    const overlay = document.getElementById(`overlay-${id}`);
+    if (!overlay) return;
+    const isOpen = overlay.style.display !== "none";
+    isOpen ? closeOverlay(id) : openOverlay(id);
+  }
+
+  function openOverlay(id) {
+    document.querySelectorAll("[data-overlay]").forEach(el => el.style.display = "none");
+    const overlay = document.getElementById(`overlay-${id}`);
+    if (!overlay) return;
+    overlay.style.display = "flex";
+    document.querySelectorAll(`[data-custom-ext="${id}"]`).forEach(b => b.classList.add("active"));
+    const ext = CUSTOM_EXTENSIONS.find(e => e.id === id);
+    if (ext && ext.onActivate) setTimeout(() => ext.onActivate(), 60);
+  }
+
+  function closeOverlay(id) {
+    const overlay = document.getElementById(`overlay-${id}`);
+    if (overlay) overlay.style.display = "none";
+    document.querySelectorAll(`[data-custom-ext="${id}"]`).forEach(b => b.classList.remove("active"));
+  }
+
   function injectScript(src) {
     return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[src^="${src.split('?')[0]}"]`)) {
-        resolve(); return;
-      }
+      const base = src.split("?")[0];
+      if (document.querySelector(`script[src^="${base}"]`)) { resolve(); return; }
       const s = document.createElement("script");
       s.src = src + "?v=" + Date.now();
-      s.defer = true;
       s.onload = resolve;
       s.onerror = reject;
       document.body.appendChild(s);
     });
   }
 
-  // ── Add nav button (rail) ─────────────────────────────────────────────────
-  function addRailButton(ext) {
-    const rail = document.querySelector("nav.rail");
-    if (!rail) return;
-    if (rail.querySelector(`[data-panel="${ext.id}"]`)) return;
-
-    // Insert before the rail-spacer
-    const spacer = rail.querySelector(".rail-spacer");
-    const btn = document.createElement("button");
-    btn.className = "rail-btn nav-tab has-tooltip";
-    btn.dataset.panel = ext.id;
-    btn.setAttribute("data-tooltip", ext.tooltip || ext.label);
-    btn.setAttribute("aria-label", ext.label);
-    btn.innerHTML = ext.icon;
-    btn.addEventListener("click", () => {
-      if (typeof switchPanel === "function") switchPanel(ext.id, { fromRailClick: true });
-    });
-
-    if (spacer) rail.insertBefore(btn, spacer);
-    else rail.appendChild(btn);
-  }
-
-  // ── Add nav button (mobile sidebar) ──────────────────────────────────────
-  function addSidebarNavButton(ext) {
-    const sidebarNav = document.querySelector(".sidebar-nav");
-    if (!sidebarNav) return;
-    if (sidebarNav.querySelector(`[data-panel="${ext.id}"]`)) return;
-
-    const btn = document.createElement("button");
-    btn.className = "nav-tab has-tooltip has-tooltip--bottom";
-    btn.dataset.panel = ext.id;
-    btn.dataset.label = ext.label;
-    btn.setAttribute("data-tooltip", ext.tooltip || ext.label);
-    btn.innerHTML = ext.iconSm || ext.icon;
-    btn.addEventListener("click", () => {
-      if (typeof switchPanel === "function") switchPanel(ext.id, { fromRailClick: true });
-    });
-
-    sidebarNav.appendChild(btn);
-  }
-
-  // ── Add full-page panel view (injected into <main>, not sidebar) ─────────
-  function addPanelView(ext) {
-    const panelId = `custom-panel-${ext.id}`;
-    if (document.getElementById(panelId)) return;
-
-    const div = document.createElement("div");
-    div.id = panelId;
-    div.className = "custom-full-panel";
-    div.setAttribute("data-custom-panel", ext.id);
-    div.style.cssText = "display:none;position:absolute;inset:0;z-index:10;background:var(--bg,#fff);overflow:hidden;";
-    div.innerHTML = ext.panelContent || "";
-
-    // Inject into <main class="main"> so it overlays the chat
-    const mainEl = document.querySelector("main.main") || document.querySelector("main") || document.body;
-    mainEl.style.position = "relative";
-    mainEl.appendChild(div);
-  }
-
-  // ── Show/hide full-page panels ────────────────────────────────────────────
-  function syncFullPanels(activePanelId) {
-    document.querySelectorAll(".custom-full-panel").forEach(el => {
-      const id = el.getAttribute("data-custom-panel");
-      el.style.display = id === activePanelId ? "block" : "none";
-    });
-  }
-
-  // ── Patch switchPanel to trigger onActivate ───────────────────────────────
-  function patchSwitchPanel() {
-    const original = window.switchPanel;
-    if (!original || window.__customLoaderPatched) return;
-    window.__customLoaderPatched = true;
-
-    window.switchPanel = async function (name, opts) {
-      const result = await original.call(this, name, opts);
-      // Show/hide full-page custom panels
-      const isCustom = CUSTOM_EXTENSIONS.find(e => e.id === name);
-      syncFullPanels(isCustom ? name : null);
-      const ext = CUSTOM_EXTENSIONS.find(e => e.id === name);
-      if (ext && ext.onActivate) {
-        setTimeout(() => ext.onActivate(), 50);
-      }
-      return result;
-    };
-  }
-
-  // ── Main init ─────────────────────────────────────────────────────────────
   async function init() {
     for (const ext of CUSTOM_EXTENSIONS) {
-      // Inject nav buttons
       addRailButton(ext);
       addSidebarNavButton(ext);
-
-      // Inject panel view
-      addPanelView(ext);
-
-      // Load extension scripts
+      createOverlay(ext);
       if (ext.scripts) {
         for (const src of ext.scripts) {
-          try { await injectScript(src); } catch (e) { console.warn("Custom script load failed:", src, e); }
+          try { await injectScript(src); } catch (e) { console.warn("Custom script failed:", src); }
         }
       }
     }
-
-    // Patch switchPanel after scripts loaded
-    patchSwitchPanel();
   }
 
-  // Wait for DOM ready
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    // switchPanel might not exist yet — wait a tick
-    setTimeout(init, 100);
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else setTimeout(init, 150);
 })();

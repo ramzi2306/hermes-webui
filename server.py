@@ -421,6 +421,14 @@ def main() -> None:
     # Fix sensitive file permissions before doing anything else
     fix_credential_permissions()
 
+    # ── Install custom plugins into Hermes home ──────────────────────────
+    try:
+        from custom.install_plugins import install_custom_plugins
+        install_custom_plugins()
+    except Exception as _e:
+        print(f"[custom] Plugin install skipped: {_e}", flush=True)
+    # ─────────────────────────────────────────────────────────────────────
+
     # ── #1558 startup self-heal ─────────────────────────────────────────
     # If a previous process wrote a session JSON with fewer messages than
     # its .bak (the data-loss shape #1558 produced), restore from the .bak.
