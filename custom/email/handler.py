@@ -232,7 +232,7 @@ Body:
 Write ONLY the email body text. No subject line, no 'Subject:', just the reply body. Be professional and concise."""
 
         result = subprocess.run(
-            [sys.executable, "-m", "hermes", "-z", prompt],
+            [sys.executable, "-m", "hermes", "-q", prompt],
             capture_output=True,
             text=True,
             timeout=30,

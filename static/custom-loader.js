@@ -94,21 +94,30 @@
     sidebarNav.appendChild(btn);
   }
 
-  // ── Add panel view div ───────────────────────────────────────────────────
+  // ── Add full-page panel view (injected into <main>, not sidebar) ─────────
   function addPanelView(ext) {
-    if (document.getElementById(`panel${ext.id.charAt(0).toUpperCase() + ext.id.slice(1)}`)) return;
+    const panelId = `custom-panel-${ext.id}`;
+    if (document.getElementById(panelId)) return;
 
-    const panelId = `panel${ext.id.charAt(0).toUpperCase() + ext.id.slice(1)}`;
     const div = document.createElement("div");
-    div.className = "panel-view";
     div.id = panelId;
+    div.className = "custom-full-panel";
+    div.setAttribute("data-custom-panel", ext.id);
+    div.style.cssText = "display:none;position:absolute;inset:0;z-index:10;background:var(--bg,#fff);overflow:hidden;";
     div.innerHTML = ext.panelContent || "";
 
-    // Insert before #panelSettings if exists, else append to sidebar
-    const sidebar = document.querySelector(".sidebar");
-    const settingsPanel = document.getElementById("panelSettings");
-    if (sidebar && settingsPanel) sidebar.insertBefore(div, settingsPanel);
-    else if (sidebar) sidebar.appendChild(div);
+    // Inject into <main class="main"> so it overlays the chat
+    const mainEl = document.querySelector("main.main") || document.querySelector("main") || document.body;
+    mainEl.style.position = "relative";
+    mainEl.appendChild(div);
+  }
+
+  // ── Show/hide full-page panels ────────────────────────────────────────────
+  function syncFullPanels(activePanelId) {
+    document.querySelectorAll(".custom-full-panel").forEach(el => {
+      const id = el.getAttribute("data-custom-panel");
+      el.style.display = id === activePanelId ? "block" : "none";
+    });
   }
 
   // ── Patch switchPanel to trigger onActivate ───────────────────────────────
@@ -119,9 +128,11 @@
 
     window.switchPanel = async function (name, opts) {
       const result = await original.call(this, name, opts);
+      // Show/hide full-page custom panels
+      const isCustom = CUSTOM_EXTENSIONS.find(e => e.id === name);
+      syncFullPanels(isCustom ? name : null);
       const ext = CUSTOM_EXTENSIONS.find(e => e.id === name);
       if (ext && ext.onActivate) {
-        // Small delay to let DOM update
         setTimeout(() => ext.onActivate(), 50);
       }
       return result;
