@@ -122,3 +122,54 @@ def email_update_draft(thread_id: str, new_draft: str, **_) -> dict:
 def email_mark_done(thread_id: str, action: str = "approved", **_) -> dict:
     from custom.email.ui_server import email_mark_done as _done
     return _done(thread_id, action)
+
+
+# ── Management API tools (organize/rework/draft) ──────────────────────────────
+
+def email_preprocess(account: str, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.preprocess(account)
+
+def email_list_threads(account: str, **_) -> list:
+    from custom.email import api as eapi
+    return eapi.list_threads(account)
+
+def email_get_original(email_id: int, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.get_original(int(email_id))
+
+def email_rework(email_id: int, text: str, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.rework_email(int(email_id), text)
+
+def email_restore(email_id: int, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.restore_email(int(email_id))
+
+def email_rename_thread(thread_id: str, title: str, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.rename_thread(thread_id, title)
+
+def email_reorder_threads(account: str, order: list, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.reorder_threads(account, order)
+
+def email_move_email(email_id: int, thread_id: str, position: int = 0, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.move_email(int(email_id), thread_id, int(position))
+
+def email_reorder_emails(thread_id: str, order: list, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.reorder_emails(thread_id, order)
+
+def email_create_thread(account: str, title: str, position: int = 0, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.create_thread(account, title, int(position))
+
+def email_save_draft(account: str, thread_id: str, body: str, to: str = "", subject: str = "", draft_id: str = None, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.save_draft(account, thread_id, body, to, subject, draft_id)
+
+def email_delete_draft(draft_id: str, **_) -> dict:
+    from custom.email import api as eapi
+    return eapi.delete_draft(draft_id)

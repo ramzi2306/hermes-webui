@@ -87,6 +87,7 @@
     const chatBody = document.getElementById("ep3-chat-body");
     if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
     resizeFrames(document.getElementById("ep3-conversation"));
+    attachThreadViewEvents();
   }
 
   // Select a thread WITHOUT a full re-render (preserves queue scroll & focus)
@@ -101,10 +102,42 @@
       center.replaceWith(tmp.firstElementChild);
     }
     // Do NOT rebuild the right column — keep the Hermes chat iframe alive.
-    // Just toggle the "Discuss this thread" button state.
     const discuss = document.getElementById("ep3-discuss");
     if (discuss) discuss.disabled = !S.activeThread;
     resizeFrames(document.getElementById("ep3-conversation"));
+    attachThreadViewEvents();
+  }
+
+  function attachThreadViewEvents() {
+    const conv = document.getElementById("ep3-conversation");
+    if (!conv || conv.dataset.wired === "1") return;
+    conv.dataset.wired = "1";
+    conv.addEventListener("click", async e => {
+      const orig = e.target.closest("[data-original]");
+      if (orig) return showOriginal(orig.dataset.original);
+      const send = e.target.closest("[data-send-draft]");
+      if (send) {
+        const d = findDraft(send.dataset.sendDraft);
+        if (d && confirm("Send this draft?")) await sendDraft(d);
+        return;
+      }
+      const del = e.target.closest("[data-del-draft]");
+      if (del) { await apiPost("/api/email/mgmt/delete-draft", { draft_id: del.dataset.delDraft }); await loadServerThreads(); render(); }
+    });
+  }
+
+  function findDraft(id) {
+    for (const t of S.threads) { const d = (t.drafts || []).find(x => x.draft_id === id); if (d) return d; }
+    return null;
+  }
+
+  async function sendDraft(d) {
+    try {
+      await apiPost("/api/email/send", { account_email: S.activeAccount.email, to: d.to_addr || "", subject: d.subject || "", body: d.body || "" });
+      await apiPost("/api/email/mgmt/delete-draft", { draft_id: d.draft_id });
+      toast("Sent ✓");
+      await syncInbox();
+    } catch (err) { toast("Send failed: " + err.message); }
   }
 
   function renderQueue() {
@@ -165,28 +198,45 @@
       return `<div class="ep3-col ep3-thread-view"><div class="ep3-empty"><div class="ep3-empty-ico">✉</div><div>Select a thread</div></div></div>`;
     }
     const bubbles = t.emails.map((e, i) => {
-      const mine = e.direction === "sent";
+      const mine = e.type === "outgoing" || e.direction === "sent";
       const who = mine ? "You" : (e.from_name || e.from_email);
       const bodyHtml = renderEmailBody(e, i);
+      const badge = e.is_reworked
+        ? `<button class="ep3-reworked" data-original="${esc(e.id)}" title="Show original">✨ reworked · view original</button>`
+        : "";
       return `
         <div class="ep3-bubble-row ${mine ? "mine" : ""}">
-          <div class="ep3-bubble ${mine ? "sent" : "recv"}">
+          <div class="ep3-bubble ${mine ? "sent" : "recv"} ${e.is_reworked ? "reworked" : ""}">
             <div class="ep3-bubble-head">
               <span class="ep3-bubble-from">${esc(who)}</span>
               <span class="ep3-bubble-date">${esc(e.date)}${e.has_attachments ? " 📎" : ""}</span>
             </div>
             ${bodyHtml}
+            ${badge}
           </div>
         </div>`;
     }).join("");
+
+    // Unsent drafts — shown dotted
+    const drafts = (t.drafts || []).map(d => `
+        <div class="ep3-bubble-row mine">
+          <div class="ep3-bubble sent ep3-draft-bubble">
+            <div class="ep3-bubble-head"><span class="ep3-bubble-from">Draft (unsent)</span></div>
+            <div class="ep3-bubble-body">${esc(d.body || "").replace(/\n/g, "<br>")}</div>
+            <div class="ep3-draft-actions">
+              <button class="ep3-btn ep3-btn-primary ep3-btn-sm" data-send-draft="${esc(d.draft_id)}">Send</button>
+              <button class="ep3-btn ep3-btn-sm" data-del-draft="${esc(d.draft_id)}">Discard</button>
+            </div>
+          </div>
+        </div>`).join("");
 
     return `
       <div class="ep3-col ep3-thread-view">
         <div class="ep3-tv-head">
           <div class="ep3-tv-title">${esc(t.name)}</div>
-          <div class="ep3-tv-sub">${esc(t.participants.join(", "))}</div>
+          <div class="ep3-tv-sub">${esc((t.participants || []).join(", "))}</div>
         </div>
-        <div class="ep3-conversation" id="ep3-conversation">${bubbles}</div>
+        <div class="ep3-conversation" id="ep3-conversation">${bubbles}${drafts}</div>
       </div>`;
   }
 
@@ -568,35 +618,48 @@
   }
 
   // ─── Load ──────────────────────────────────────────────────────────────────
+  // Load server-side threads (AI-controlled order/title/rework/drafts)
+  async function loadServerThreads() {
+    const res = await apiGet(`/api/email/threads?account=${encodeURIComponent(S.activeAccount.email)}`);
+    // normalize to the shape the UI uses
+    S.threads = (res.threads || []).map(t => ({
+      id: t.thread_id,
+      thread_id: t.thread_id,
+      name: t.title || "(no subject)",
+      position: t.position,
+      last_ts: t.last_ts || 0,
+      participants: t.participants || [],
+      emails: t.emails || [],
+      drafts: t.drafts || [],
+      preview: (t.emails?.[t.emails.length - 1]?.body || "").slice(0, 140).replace(/\n/g, " "),
+      urgency: "normal",
+    }));
+  }
+
   async function loadInbox() {
-    // Reads from LOCAL STORE (instant). Auto-syncs once if store is empty.
     if (!S.activeAccount) { render(); return; }
     S.loading = true; render();
     try {
-      const res = await apiPost("/api/email/fetch", { account_email: S.activeAccount.email, limit: 300 });
-      S.emails = res.emails || [];
-      S.threads = groupThreads(S.emails);
-      S.lastSync = res.last_sync || 0;
+      // Ensure emails are threaded server-side, then load threads.
+      await apiPost("/api/email/mgmt/preprocess", { account: S.activeAccount.email }).catch(() => {});
+      await loadServerThreads();
       S.loading = false; render();
-      // First time (empty store) → auto-sync from IMAP
-      if (S.emails.length === 0) { await syncInbox(); }
+      if (S.threads.length === 0) { await syncInbox(); }  // empty store → first sync
     } catch (err) {
       console.error("inbox load failed", err);
-      S.emails = []; S.threads = []; S.loading = false; render();
+      S.threads = []; S.loading = false; render();
     }
   }
 
   async function syncInbox() {
-    // Hits IMAP incrementally (INBOX + Sent), updates store, re-renders.
     if (!S.activeAccount) return;
     const btn = document.getElementById("ep3-refresh");
-    if (btn) { btn.classList.add("spinning"); btn.textContent = "⟳"; }
+    if (btn) btn.classList.add("spinning");
     S.syncing = true;
     try {
       const res = await apiPost("/api/email/sync", { account_email: S.activeAccount.email, limit: 300 });
-      S.emails = res.emails || [];
-      S.threads = groupThreads(S.emails);
-      S.lastSync = res.last_sync || 0;
+      await apiPost("/api/email/mgmt/preprocess", { account: S.activeAccount.email }).catch(() => {});
+      await loadServerThreads();
       const n = res.sync?.new || 0;
       if (n > 0) toast(`Synced ${n} new email${n > 1 ? "s" : ""}`);
       else if (res.sync?.error) toast("Sync error: " + res.sync.error);
@@ -605,6 +668,25 @@
     } finally {
       S.syncing = false; render();
     }
+  }
+
+  // Open the immutable original of a reworked email in a popup
+  async function showOriginal(emailId) {
+    try {
+      const o = await apiGet(`/api/email/original?id=${encodeURIComponent(emailId)}`);
+      const html = o.body_html ? cleanEmailHtml(o.body_html) : "";
+      const bodyHtml = html ? `<div class="ep3-html">${html}</div>` : `<div class="ep3-bubble-body">${esc(o.body_text || "").replace(/\n/g, "<br>")}</div>`;
+      const modal = document.createElement("div");
+      modal.className = "ep3-modal-bg";
+      modal.innerHTML = `<div class="ep3-modal" style="max-width:680px;">
+        <div class="ep3-modal-head"><span>Original email</span><button class="ep3-btn ep3-btn-icon" id="ep3-orig-x">✕</button></div>
+        <div class="ep3-modal-body"><div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${esc(o.from_name || "")} &lt;${esc(o.from_email || "")}&gt; · ${esc(o.date || "")}</div>${bodyHtml}</div>
+      </div>`;
+      document.body.appendChild(modal);
+      const close = () => modal.remove();
+      modal.querySelector("#ep3-orig-x").onclick = close;
+      modal.onclick = e => { if (e.target === modal) close(); };
+    } catch (e) { toast("Could not load original: " + e.message); }
   }
 
   function toast(msg) {

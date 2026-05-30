@@ -65,6 +65,27 @@ def register_get(parsed, handler, j, bad):
             return j(handler, {"accounts": safe})
         except Exception as e:
             return bad(handler, str(e), status=500)
+
+    # ── Management API: threads (GET) ─────────────────────────────────────────
+    if parsed.path == "/api/email/threads":
+        try:
+            from urllib.parse import parse_qs
+            from custom.email import api as eapi
+            q = parse_qs(parsed.query or "")
+            account = (q.get("account") or [""])[0]
+            return j(handler, {"threads": eapi.list_threads(account)})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/original":
+        try:
+            from urllib.parse import parse_qs
+            from custom.email import api as eapi
+            q = parse_qs(parsed.query or "")
+            eid = int((q.get("id") or ["0"])[0])
+            return j(handler, eapi.get_original(eid))
+        except Exception as e:
+            return bad(handler, str(e), status=500)
     return False
 
 
@@ -158,6 +179,39 @@ def register_post(parsed, handler, body, j, bad):
                 _save_email_settings(body.get("settings", {}))
                 return j(handler, {"ok": True})
             return j(handler, _email_settings())
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    # ── Management API (POST) — the agent + UI drive these ────────────────────
+    if parsed.path.startswith("/api/email/mgmt/"):
+        try:
+            from custom.email import api as eapi
+            action = parsed.path[len("/api/email/mgmt/"):]
+            if action == "preprocess":
+                return j(handler, eapi.preprocess(body.get("account", "")))
+            if action == "rework":
+                return j(handler, eapi.rework_email(int(body["email_id"]), body.get("text", "")))
+            if action == "restore":
+                return j(handler, eapi.restore_email(int(body["email_id"])))
+            if action == "rename-thread":
+                return j(handler, eapi.rename_thread(body["thread_id"], body.get("title", "")))
+            if action == "reorder-threads":
+                return j(handler, eapi.reorder_threads(body.get("account", ""), body.get("order", [])))
+            if action == "set-thread-position":
+                return j(handler, eapi.set_thread_position(body["thread_id"], int(body.get("position", 0))))
+            if action == "move-email":
+                return j(handler, eapi.move_email(int(body["email_id"]), body["thread_id"], int(body.get("position", 0))))
+            if action == "reorder-emails":
+                return j(handler, eapi.reorder_emails(body["thread_id"], body.get("order", [])))
+            if action == "create-thread":
+                return j(handler, eapi.create_thread(body.get("account", ""), body.get("title", "New thread"), int(body.get("position", 0))))
+            if action == "save-draft":
+                return j(handler, eapi.save_draft(body.get("account", ""), body.get("thread_id", ""), body.get("body", ""), body.get("to", ""), body.get("subject", ""), body.get("draft_id")))
+            if action == "delete-draft":
+                return j(handler, eapi.delete_draft(body["draft_id"]))
+            return bad(handler, f"unknown mgmt action: {action}", status=404)
+        except KeyError as e:
+            return bad(handler, f"missing field: {e}", status=400)
         except Exception as e:
             return bad(handler, str(e), status=500)
 

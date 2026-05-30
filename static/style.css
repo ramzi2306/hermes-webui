@@ -4808,3 +4808,15 @@ main.main.showing-logs > #mainLogs{display:flex;}
 /* Embedded real Hermes chat iframe in the email right panel */
 .ep3-hermes-frame { flex: 1; width: 100%; border: none; background: var(--bg); display: block; }
 .ep3-agent-chat { width: 420px; min-width: 360px; }
+
+/* Reworked email badge + dotted draft + full-height chat */
+.ep3-bubble.reworked { border-left: 3px solid #a855f7; }
+.ep3-reworked { margin-top: 8px; background: rgba(168,85,247,0.12); color: #a855f7; border: none; border-radius: 10px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
+.ep3-reworked:hover { background: rgba(168,85,247,0.22); }
+.ep3-draft-bubble { background: transparent !important; color: var(--text) !important; border: 1.5px dashed var(--accent) !important; }
+.ep3-draft-bubble .ep3-bubble-from { color: var(--accent); }
+.ep3-draft-bubble .ep3-draft-actions { display: flex; gap: 6px; margin-top: 8px; }
+/* Make the embedded Hermes chat fill full height */
+#email-panel, .ep3, .ep3-col, .ep3-agent-chat { height: 100%; }
+.ep3-agent-chat { display: flex; flex-direction: column; }
+.ep3-hermes-frame { flex: 1 1 auto; height: 100%; min-height: 0; width: 100%; border: 0; }
