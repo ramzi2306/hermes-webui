@@ -5,10 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: hermes-webui
     restart: unless-stopped
-    ports:
-      - "8787:8787"
     volumes:
       - webui-data:/home/hermeswebui/.hermes
     environment:
