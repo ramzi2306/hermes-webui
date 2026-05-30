@@ -207,19 +207,79 @@ def send_email(account: dict, to: str, subject: str, body: str, reply_to_message
         raise RuntimeError(f"SMTP error: {e}")
 
 
+def _email_settings() -> dict:
+    """Load email settings (profile choice, etc.) from state dir."""
+    path = STATE_DIR / "email_settings.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"profile": "collab-manager"}
+
+
+def _save_email_settings(settings: dict) -> None:
+    path = STATE_DIR / "email_settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def _profile_home(profile: str) -> Optional[str]:
+    """Resolve HERMES_HOME for a named profile, or None for default."""
+    if not profile or profile == "default":
+        return None
+    base = os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
+    base_path = Path(base)
+    # If HERMES_HOME already points into profiles/, walk up to base
+    if base_path.name and base_path.parent.name == "profiles":
+        base_path = base_path.parent.parent
+    candidate = base_path / "profiles" / profile
+    return str(candidate) if candidate.exists() else None
+
+
+def _run_hermes(prompt: str, profile: str = None, timeout: int = 60) -> str:
+    """Run hermes one-shot with optional profile, return stdout."""
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    profile = profile or _email_settings().get("profile", "collab-manager")
+    phome = _profile_home(profile)
+    if phome:
+        env["HERMES_HOME"] = phome
+
+    result = subprocess.run(
+        [sys.executable, "-m", "hermes", "-q", prompt],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(Path.home()),
+        env=env,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return ""
+
+
+def _format_thread(thread: list) -> str:
+    """Format a list of emails into a readable thread context."""
+    lines = []
+    for em in thread[:15]:
+        who = em.get("from_name") or em.get("from_email") or "Unknown"
+        date = em.get("date", "")
+        body = (em.get("body", "") or "")[:1500]
+        lines.append(f"--- From: {who} ({date}) ---\n{body}")
+    return "\n\n".join(lines)
+
+
 def generate_ai_draft(email_data: dict, user_instruction: str = "") -> str:
     """Generate AI draft reply using Hermes agent."""
-    try:
-        from api.config import load_settings
-        import subprocess
-        import sys
+    subject = email_data.get("subject", "")
+    from_name = email_data.get("from_name", "")
+    from_email = email_data.get("from_email", "")
+    body = email_data.get("body", "")[:2000]
 
-        subject = email_data.get("subject", "")
-        from_name = email_data.get("from_name", "")
-        from_email = email_data.get("from_email", "")
-        body = email_data.get("body", "")[:2000]
-
-        prompt = f"""You are drafting a professional email reply on behalf of Ramzi.
+    prompt = f"""You are drafting a professional email reply on behalf of Ramzi.
 
 Original email:
 From: {from_name} <{from_email}>
@@ -229,18 +289,60 @@ Body:
 
 {"User instruction: " + user_instruction if user_instruction else "Write a professional, concise reply."}
 
-Write ONLY the email body text. No subject line, no 'Subject:', just the reply body. Be professional and concise."""
+Write ONLY the email body text. No subject line, no 'Subject:', just the reply body. Be professional and concise in Ramzi's voice: direct, warm, gets to the point."""
 
-        result = subprocess.run(
-            [sys.executable, "-m", "hermes", "-q", prompt],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(Path.home()),
-        )
+    try:
+        out = _run_hermes(prompt, timeout=60)
+        if out:
+            return out
+    except Exception:
+        pass
+    return f"Hi {from_name},\n\nThank you for your email.\n\nBest regards,\nRamzi"
 
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        return f"Hi {from_name},\n\nThank you for your email.\n\nBest regards,\nRamzi"
+
+def agent_chat(thread: list, history: list, message: str, profile: str = None) -> str:
+    """
+    Right-column agent chat. Ramzi talks to the email agent about a thread.
+    thread = list of emails in the conversation
+    history = prior chat turns [{role, text}]
+    message = new user message
+    """
+    thread_ctx = _format_thread(thread) if thread else "(no email selected)"
+
+    hist_lines = []
+    for turn in history[-8:]:
+        role = "Ramzi" if turn.get("role") == "user" else "You"
+        hist_lines.append(f"{role}: {turn.get('text', '')}")
+    hist_ctx = "\n".join(hist_lines) if hist_lines else "(start of conversation)"
+
+    prompt = f"""You are Ramzi's email assistant managing his inbox. You are looking at this email thread:
+
+{thread_ctx}
+
+Conversation so far:
+{hist_ctx}
+
+Ramzi: {message}
+
+Respond helpfully. You can: summarize the thread, explain context, draft a reply, suggest actions. If Ramzi asks you to draft a reply, write the draft clearly marked. Keep responses concise and in Ramzi's direct, warm voice."""
+
+    try:
+        out = _run_hermes(prompt, profile=profile, timeout=90)
+        if out:
+            return out
     except Exception as e:
-        return f"Hi,\n\nThank you for your email.\n\nBest regards,\nRamzi"
+        return f"(Agent error: {e})"
+    return "(No response from agent — check that Hermes is running.)"
+
+
+def summarize_thread(thread: list, profile: str = None) -> str:
+    """Summarize a thread into a clean readable summary."""
+    prompt = f"""Summarize this email thread concisely for Ramzi. Capture the key points, what's being asked, and any action needed.
+
+{_format_thread(thread)}
+
+Write a clear 2-4 sentence summary."""
+    try:
+        return _run_hermes(prompt, profile=profile, timeout=60) or "(Could not summarize)"
+    except Exception as e:
+        return f"(Summary error: {e})"

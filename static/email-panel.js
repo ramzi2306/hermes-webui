@@ -1,515 +1,464 @@
 /**
- * Email Panel — AI-powered iMessage-style inbox for Hermes WebUI
- * Handles IMAP/SMTP accounts, conversation view, and AI drafting
+ * Email Panel — 3-column AI supervisor inbox
+ * [ Thread Queue | Thread View (read-only) | Agent Chat ]
+ * The rail stays visible to the left (handled by custom-loader.js).
  */
-
 (function () {
   "use strict";
 
-  // ─── State ───────────────────────────────────────────────────────────────
-  let emailState = {
+  // ─── State ─────────────────────────────────────────────────────────────────
+  const S = {
     accounts: [],
     activeAccount: null,
-    emails: [],
-    activeEmail: null,
+    emails: [],          // raw emails from server
+    threads: [],         // grouped threads
+    activeThread: null,  // currently open thread id
     loading: false,
-    drafts: {},
-    filter: "all", // "all" | "favorites"
+    filter: "all",       // all | favorites
+    search: "",
+    chat: {},            // threadId -> [{role, text}]
+    profile: "collab-manager",
+    sse: null,
   };
 
-  // ─── Favorites (persisted in localStorage) ───────────────────────────────
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+  const esc = s => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const initials = n => { const p = String(n || "?").trim().split(/\s+/); return ((p[0]?.[0] || "?") + (p[1]?.[0] || "")).toUpperCase(); };
+  const timeAgo = ts => { const d = Date.now() / 1000 - ts; if (d < 60) return "now"; if (d < 3600) return Math.floor(d / 60) + "m"; if (d < 86400) return Math.floor(d / 3600) + "h"; return Math.floor(d / 86400) + "d"; };
+  const normalizeSubject = s => String(s || "").replace(/^(re|fwd|fw|aw|tr)\s*:\s*/gi, "").replace(/^(re|fwd|fw|aw|tr)\s*:\s*/gi, "").trim().toLowerCase();
+
   const FAVS_KEY = "hermes_email_favorites";
-  function getFavorites() {
-    try { return JSON.parse(localStorage.getItem(FAVS_KEY) || "{}"); } catch { return {}; }
-  }
-  function toggleFavorite(emailId) {
-    const favs = getFavorites();
-    if (favs[emailId]) delete favs[emailId];
-    else favs[emailId] = true;
-    localStorage.setItem(FAVS_KEY, JSON.stringify(favs));
-    return !!favs[emailId];
-  }
-  function isFavorite(emailId) { return !!getFavorites()[emailId]; }
+  const getFavs = () => { try { return JSON.parse(localStorage.getItem(FAVS_KEY) || "{}"); } catch { return {}; } };
+  const toggleFav = id => { const f = getFavs(); f[id] ? delete f[id] : f[id] = 1; localStorage.setItem(FAVS_KEY, JSON.stringify(f)); return !!f[id]; };
+  const isFav = id => !!getFavs()[id];
 
-  // ─── API Helpers ─────────────────────────────────────────────────────────
-  async function apiGet(path) {
-    const res = await fetch(path, { credentials: "same-origin" });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+  async function apiGet(p) { const r = await fetch(p, { credentials: "same-origin" }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+  async function apiPost(p, b) {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || window.__CSRF_TOKEN__ || "";
+    const r = await fetch(p, { method: "POST", headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}) }, credentials: "same-origin", body: JSON.stringify(b) });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
   }
 
-  async function apiPost(path, body) {
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
-    const res = await fetch(path, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-      },
-      credentials: "same-origin",
-      body: JSON.stringify(body),
+  // ─── Thread grouping ───────────────────────────────────────────────────────
+  function groupThreads(emails) {
+    const map = {};
+    for (const e of emails) {
+      const key = normalizeSubject(e.subject) || e.from_email || e.id;
+      if (!map[key]) {
+        map[key] = {
+          id: key,
+          name: e.subject || "(no subject)",
+          emails: [],
+          last_ts: 0,
+          participants: new Set(),
+          urgency: "normal",
+        };
+      }
+      map[key].emails.push(e);
+      map[key].last_ts = Math.max(map[key].last_ts, e.timestamp || 0);
+      map[key].participants.add(e.from_name || e.from_email);
+    }
+    const threads = Object.values(map).map(t => {
+      t.emails.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      t.participants = [...t.participants];
+      t.preview = t.emails[t.emails.length - 1]?.preview || "";
+      return t;
     });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    threads.sort((a, b) => b.last_ts - a.last_ts);
+    return threads;
   }
 
-  // ─── Render Helpers ──────────────────────────────────────────────────────
-  function esc(str) {
-    return String(str || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  // ─── Render ────────────────────────────────────────────────────────────────
+  function render() {
+    const root = document.getElementById("email-panel");
+    if (!root) return;
+    root.innerHTML = `
+      <div class="ep3">
+        ${renderQueue()}
+        ${renderThreadView()}
+        ${renderAgentChat()}
+      </div>`;
+    attachEvents();
+    // Auto-scroll chat
+    const chatBody = document.getElementById("ep3-chat-body");
+    if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
   }
 
-  function initials(name) {
-    const parts = String(name || "?").trim().split(/\s+/);
-    return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
-  }
-
-  function timeAgo(timestamp) {
-    const now = Date.now() / 1000;
-    const diff = now - timestamp;
-    if (diff < 60) return "just now";
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-  }
-
-  // ─── Main Panel Render ───────────────────────────────────────────────────
-  function renderEmailPanel() {
-    const panel = document.getElementById("email-panel");
-    if (!panel) return;
-
-    panel.innerHTML = `
-      <div class="ep-container">
-        <div class="ep-sidebar">
-          <div class="ep-sidebar-header">
-            <span class="ep-title">✉ Mail</span>
-            <button class="ep-btn ep-btn-icon ${emailState.filter === 'favorites' ? 'ep-btn-active' : ''}" id="ep-favs-btn" title="Favorites only">★</button>
-            <button class="ep-btn ep-btn-icon" id="ep-compose-btn" title="Compose">✏</button>
-            <button class="ep-btn ep-btn-icon" id="ep-settings-btn" title="Settings">⚙</button>
-          </div>
-
-          <div class="ep-account-bar" id="ep-account-bar">
-            ${emailState.accounts.map(a => `
-              <div class="ep-account-chip ${emailState.activeAccount?.email === a.email ? "active" : ""}"
-                   data-email="${esc(a.email)}" title="${esc(a.email)}">
-                ${initials(a.name || a.email)}
-              </div>
-            `).join("")}
-            ${emailState.accounts.length === 0 ? `
-              <div class="ep-no-accounts">
-                <button class="ep-btn ep-btn-primary" id="ep-add-account-btn">+ Add Email Account</button>
-              </div>` : ""}
-          </div>
-
-          <div class="ep-email-list" id="ep-email-list">
-            ${renderEmailList()}
-          </div>
-        </div>
-
-        <div class="ep-main" id="ep-main">
-          ${emailState.activeEmail ? renderEmailDetail(emailState.activeEmail) : renderEmptyState()}
-        </div>
-      </div>
-    `;
-
-    attachEmailPanelEvents();
-  }
-
-  function renderEmailList() {
-    if (emailState.loading) {
-      return `<div class="ep-loading"><div class="ep-spinner"></div> Loading...</div>`;
-    }
-    if (emailState.emails.length === 0) {
-      return `<div class="ep-empty-list">No emails yet.<br>Select an account to load.</div>`;
+  function renderQueue() {
+    let threads = S.threads;
+    if (S.filter === "favorites") threads = threads.filter(t => isFav(t.id));
+    if (S.search) {
+      const q = S.search.toLowerCase();
+      threads = threads.filter(t => t.name.toLowerCase().includes(q) || t.participants.join(" ").toLowerCase().includes(q));
     }
 
-    const visible = emailState.filter === "favorites"
-      ? emailState.emails.filter(e => isFavorite(e.id))
-      : emailState.emails;
+    const accountBar = S.accounts.length ? S.accounts.map(a => `
+      <div class="ep3-acct ${S.activeAccount?.email === a.email ? "active" : ""}" data-acct="${esc(a.email)}" title="${esc(a.email)}">${initials(a.name || a.email)}</div>
+    `).join("") : `<button class="ep3-btn ep3-btn-sm" id="ep3-add-acct">+ Add Account</button>`;
 
-    if (visible.length === 0 && emailState.filter === "favorites") {
-      return `<div class="ep-empty-list">No favorites yet.<br>Click ★ on any email to save it.</div>`;
-    }
-
-    return visible.map(e => {
-      const fav = isFavorite(e.id);
-      return `
-        <div class="ep-email-item ${emailState.activeEmail?.id === e.id ? "active" : ""}"
-             data-id="${esc(e.id)}">
-          <div class="ep-avatar">${initials(e.from_name)}</div>
-          <div class="ep-email-meta">
-            <div class="ep-email-from">${esc(e.from_name || e.from_email)}</div>
-            <div class="ep-email-subject">${esc(e.subject)}</div>
-            <div class="ep-email-preview">${esc(e.preview)}</div>
-          </div>
-          <div class="ep-email-right">
-            <div class="ep-email-time">${timeAgo(e.timestamp)}</div>
-            <button class="ep-star-btn ${fav ? "ep-star-active" : ""}" data-star="${esc(e.id)}" title="${fav ? "Remove favorite" : "Add to favorites"}">★</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-  }
-
-  function renderEmptyState() {
-    return `
-      <div class="ep-empty-state">
-        <div class="ep-empty-icon">✉</div>
-        <div class="ep-empty-text">Select an email to read</div>
-      </div>
-    `;
-  }
-
-  function renderEmailDetail(em) {
-    const draft = emailState.drafts[em.id] || "";
-    return `
-      <div class="ep-detail">
-        <div class="ep-detail-header">
-          <div class="ep-detail-subject">${esc(em.subject)}</div>
-          <div class="ep-detail-from">
-            <span class="ep-detail-avatar">${initials(em.from_name)}</span>
-            <div>
-              <div class="ep-detail-from-name">${esc(em.from_name)}</div>
-              <div class="ep-detail-from-email">&lt;${esc(em.from_email)}&gt;</div>
-            </div>
-            <div class="ep-detail-date">${esc(em.date)}</div>
-          </div>
-        </div>
-
-        <div class="ep-conversation">
-          <div class="ep-bubble ep-bubble-received">
-            <div class="ep-bubble-body">${esc(em.body).replace(/\n/g, "<br>")}</div>
-          </div>
-          ${draft ? `
-          <div class="ep-bubble ep-bubble-sent ep-bubble-draft">
-            <div class="ep-bubble-label">Draft</div>
-            <div class="ep-bubble-body" id="ep-draft-body">${esc(draft).replace(/\n/g, "<br>")}</div>
-          </div>` : ""}
-        </div>
-
-        <div class="ep-reply-area">
-          <div class="ep-ai-bar">
-            <input class="ep-ai-input" id="ep-ai-input"
-                   placeholder="Ask Hermes to draft a reply... (e.g. 'Decline politely')" />
-            <button class="ep-btn ep-btn-ai" id="ep-draft-btn">✦ Draft</button>
-          </div>
-          <textarea class="ep-reply-textarea" id="ep-reply-textarea"
-                    placeholder="Reply...">${draft}</textarea>
-          <div class="ep-reply-actions">
-            <button class="ep-btn" id="ep-discard-btn">Discard</button>
-            <button class="ep-btn ep-btn-primary" id="ep-send-btn">Send ➤</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // ─── Settings Modal ───────────────────────────────────────────────────────
-  function renderSettingsModal() {
-    const accounts = emailState.accounts;
-    return `
-      <div class="ep-modal-overlay" id="ep-modal-overlay">
-        <div class="ep-modal">
-          <div class="ep-modal-header">
-            <span>Email Accounts</span>
-            <button class="ep-btn ep-btn-icon" id="ep-modal-close">✕</button>
-          </div>
-          <div class="ep-modal-body">
-            ${accounts.map((a, i) => `
-              <div class="ep-account-row">
-                <div class="ep-account-info">
-                  <strong>${esc(a.name || a.email)}</strong><br>
-                  <small>${esc(a.email)}</small>
+    const list = S.loading
+      ? `<div class="ep3-loading"><span class="ep3-spin"></span> Loading inbox…</div>`
+      : threads.length === 0
+        ? `<div class="ep3-empty-sm">${S.filter === "favorites" ? "No favorites yet" : "No threads"}</div>`
+        : threads.map(t => {
+            const u = t.urgency === "urgent" ? "🔴" : t.urgency === "low" ? "⚪" : "🟡";
+            const fav = isFav(t.id);
+            return `
+              <div class="ep3-thread ${S.activeThread === t.id ? "active" : ""}" data-thread="${esc(t.id)}">
+                <div class="ep3-thread-avatar">${initials(t.participants[0])}</div>
+                <div class="ep3-thread-meta">
+                  <div class="ep3-thread-top">
+                    <span class="ep3-thread-urgency">${u}</span>
+                    <span class="ep3-thread-name">${esc(t.name)}</span>
+                  </div>
+                  <div class="ep3-thread-parts">${esc(t.participants.slice(0, 3).join(", "))}${t.emails.length > 1 ? ` · ${t.emails.length}` : ""}</div>
+                  <div class="ep3-thread-preview">${esc(t.preview)}</div>
                 </div>
-                <button class="ep-btn ep-btn-danger ep-btn-sm" data-remove="${i}">Remove</button>
-              </div>
-            `).join("")}
+                <div class="ep3-thread-right">
+                  <span class="ep3-thread-time">${timeAgo(t.last_ts)}</span>
+                  <button class="ep3-star ${fav ? "on" : ""}" data-star="${esc(t.id)}">★</button>
+                </div>
+              </div>`;
+          }).join("");
 
-            <div class="ep-add-account-form" id="ep-add-form">
-              <h4>Add Account</h4>
-              <input class="ep-input" id="ep-f-name" placeholder="Display Name" />
-              <input class="ep-input" id="ep-f-email" placeholder="Email address" type="email" />
-              <input class="ep-input" id="ep-f-password" placeholder="Password / App Password" type="password" />
-              <div class="ep-form-row">
-                <input class="ep-input" id="ep-f-imap-host" placeholder="IMAP Host (e.g. imap.gmail.com)" />
-                <input class="ep-input ep-input-sm" id="ep-f-imap-port" placeholder="Port" value="993" type="number" />
-              </div>
-              <div class="ep-form-row">
-                <input class="ep-input" id="ep-f-smtp-host" placeholder="SMTP Host (e.g. smtp.gmail.com)" />
-                <input class="ep-input ep-input-sm" id="ep-f-smtp-port" placeholder="Port" value="587" type="number" />
-              </div>
-              <button class="ep-btn ep-btn-primary" id="ep-save-account-btn">Save Account</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // ─── Compose Modal ────────────────────────────────────────────────────────
-  function renderComposeModal() {
     return `
-      <div class="ep-modal-overlay" id="ep-modal-overlay">
-        <div class="ep-modal ep-modal-compose">
-          <div class="ep-modal-header">
-            <span>New Email</span>
-            <button class="ep-btn ep-btn-icon" id="ep-modal-close">✕</button>
-          </div>
-          <div class="ep-modal-body">
-            <input class="ep-input" id="ep-c-to" placeholder="To" />
-            <input class="ep-input" id="ep-c-subject" placeholder="Subject" />
-            <textarea class="ep-compose-textarea" id="ep-c-body" placeholder="Message..."></textarea>
-            <div class="ep-reply-actions">
-              <button class="ep-btn" id="ep-modal-close">Cancel</button>
-              <button class="ep-btn ep-btn-primary" id="ep-compose-send-btn">Send ➤</button>
-            </div>
+      <div class="ep3-col ep3-queue">
+        <div class="ep3-queue-head">
+          <div class="ep3-accts">${accountBar}</div>
+          <div class="ep3-queue-tools">
+            <button class="ep3-btn ep3-btn-icon ${S.filter === "favorites" ? "on" : ""}" id="ep3-fav-filter" title="Favorites">★</button>
+            <button class="ep3-btn ep3-btn-icon" id="ep3-refresh" title="Refresh">⟳</button>
+            <button class="ep3-btn ep3-btn-icon" id="ep3-settings" title="Settings">⚙</button>
           </div>
         </div>
-      </div>
-    `;
+        <input class="ep3-search" id="ep3-search" placeholder="Search threads…" value="${esc(S.search)}" />
+        <div class="ep3-thread-list" id="ep3-thread-list">${list}</div>
+      </div>`;
   }
 
-  // ─── Event Handlers ───────────────────────────────────────────────────────
-  function attachEmailPanelEvents() {
-    // Favorites filter toggle
-    document.getElementById("ep-favs-btn")?.addEventListener("click", () => {
-      emailState.filter = emailState.filter === "favorites" ? "all" : "favorites";
-      renderEmailPanel();
+  function renderThreadView() {
+    const t = S.threads.find(x => x.id === S.activeThread);
+    if (!t) {
+      return `<div class="ep3-col ep3-thread-view"><div class="ep3-empty"><div class="ep3-empty-ico">✉</div><div>Select a thread</div></div></div>`;
+    }
+    const bubbles = t.emails.map(e => {
+      const mine = S.accounts.some(a => (e.from_email || "").includes(a.email));
+      return `
+        <div class="ep3-bubble-row ${mine ? "mine" : ""}">
+          <div class="ep3-bubble ${mine ? "sent" : "recv"}">
+            <div class="ep3-bubble-head">
+              <span class="ep3-bubble-from">${esc(e.from_name || e.from_email)}</span>
+              <span class="ep3-bubble-date">${esc(e.date)}</span>
+            </div>
+            <div class="ep3-bubble-body">${esc(e.body).replace(/\n/g, "<br>")}</div>
+          </div>
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="ep3-col ep3-thread-view">
+        <div class="ep3-tv-head">
+          <div class="ep3-tv-title">${esc(t.name)}</div>
+          <div class="ep3-tv-sub">${esc(t.participants.join(", "))}</div>
+        </div>
+        <div class="ep3-conversation" id="ep3-conversation">${bubbles}</div>
+      </div>`;
+  }
+
+  function renderAgentChat() {
+    const t = S.threads.find(x => x.id === S.activeThread);
+    const msgs = (S.chat[S.activeThread] || []);
+    const chatHtml = msgs.length === 0
+      ? `<div class="ep3-chat-hint">${t ? "Ask me about this thread — summarize, draft a reply, or anything." : "Select a thread to start."}</div>`
+      : msgs.map(m => {
+          if (m.role === "draft") {
+            return `
+              <div class="ep3-msg agent">
+                <div class="ep3-draft-card">
+                  <div class="ep3-draft-label">📝 Draft Reply</div>
+                  <div class="ep3-draft-body" contenteditable="true" data-draft-id="${esc(m.id || '')}">${esc(m.text).replace(/\n/g, "<br>")}</div>
+                  <div class="ep3-draft-actions">
+                    <button class="ep3-btn ep3-btn-primary" data-approve="${esc(m.id || '')}">✓ Approve & Send</button>
+                    <button class="ep3-btn" data-discard-draft="1">Discard</button>
+                  </div>
+                </div>
+              </div>`;
+          }
+          return `<div class="ep3-msg ${m.role}"><div class="ep3-msg-bubble">${esc(m.text).replace(/\n/g, "<br>")}</div></div>`;
+        }).join("");
+
+    return `
+      <div class="ep3-col ep3-agent-chat">
+        <div class="ep3-chat-head">
+          <span class="ep3-chat-title">🤖 ${esc(S.profile)}</span>
+        </div>
+        <div class="ep3-chat-body" id="ep3-chat-body">${chatHtml}</div>
+        <div class="ep3-chat-actions">
+          <button class="ep3-chip" data-quick="draft" ${!t ? "disabled" : ""}>Draft reply</button>
+          <button class="ep3-chip" data-quick="summarize" ${!t ? "disabled" : ""}>Summarize</button>
+        </div>
+        <div class="ep3-chat-input-bar">
+          <textarea class="ep3-chat-input" id="ep3-chat-input" placeholder="Message the agent…" ${!t ? "disabled" : ""}></textarea>
+          <button class="ep3-btn ep3-btn-primary ep3-send" id="ep3-chat-send" ${!t ? "disabled" : ""}>➤</button>
+        </div>
+      </div>`;
+  }
+
+  // ─── Events ────────────────────────────────────────────────────────────────
+  function attachEvents() {
+    document.querySelectorAll(".ep3-acct").forEach(el => el.addEventListener("click", async () => {
+      S.activeAccount = S.accounts.find(a => a.email === el.dataset.acct);
+      S.activeThread = null;
+      await loadInbox();
+    }));
+    document.getElementById("ep3-add-acct")?.addEventListener("click", openSettings);
+    document.getElementById("ep3-settings")?.addEventListener("click", openSettings);
+    document.getElementById("ep3-refresh")?.addEventListener("click", loadInbox);
+    document.getElementById("ep3-fav-filter")?.addEventListener("click", () => { S.filter = S.filter === "favorites" ? "all" : "favorites"; render(); });
+    const searchEl = document.getElementById("ep3-search");
+    if (searchEl) searchEl.addEventListener("input", e => { S.search = e.target.value; const list = document.getElementById("ep3-thread-list"); if (list) list.innerHTML = renderQueue().match(/ep3-thread-list[^>]*>([\s\S]*?)<\/div>\s*<\/div>\s*$/)?.[1] || list.innerHTML; renderQueueListOnly(); });
+
+    document.getElementById("ep3-thread-list")?.addEventListener("click", e => {
+      const star = e.target.closest("[data-star]");
+      if (star) { e.stopPropagation(); const on = toggleFav(star.dataset.star); star.classList.toggle("on", on); return; }
+      const th = e.target.closest("[data-thread]");
+      if (th) { S.activeThread = th.dataset.thread; render(); }
     });
 
-    // Star buttons on email items
-    document.getElementById("ep-email-list")?.addEventListener("click", e => {
-      const starBtn = e.target.closest("[data-star]");
-      if (starBtn) {
-        e.stopPropagation();
-        const id = starBtn.dataset.star;
-        const nowFav = toggleFavorite(id);
-        starBtn.classList.toggle("ep-star-active", nowFav);
-        // Also update the favorites filter button
-        const favsBtn = document.getElementById("ep-favs-btn");
-        if (favsBtn && emailState.filter === "favorites") renderEmailPanel();
-        return;
-      }
-    });
+    document.getElementById("ep3-chat-send")?.addEventListener("click", sendChat);
+    document.getElementById("ep3-chat-input")?.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+    document.querySelectorAll("[data-quick]").forEach(b => b.addEventListener("click", () => quickAction(b.dataset.quick)));
 
-    // Account chips
-    document.querySelectorAll(".ep-account-chip").forEach(chip => {
-      chip.addEventListener("click", async () => {
-        const email = chip.dataset.email;
-        emailState.activeAccount = emailState.accounts.find(a => a.email === email);
-        emailState.activeEmail = null;
-        await loadEmails();
-      });
-    });
-
-    // Email list items
-    document.getElementById("ep-email-list")?.addEventListener("click", e => {
-      const item = e.target.closest(".ep-email-item");
-      if (!item) return;
-      const id = item.dataset.id;
-      emailState.activeEmail = emailState.emails.find(em => em.id === id);
-      renderEmailPanel();
-    });
-
-    // Settings button
-    document.getElementById("ep-settings-btn")?.addEventListener("click", () => {
-      document.body.insertAdjacentHTML("beforeend", renderSettingsModal());
-      attachModalEvents();
-    });
-
-    // Compose button
-    document.getElementById("ep-compose-btn")?.addEventListener("click", () => {
-      document.body.insertAdjacentHTML("beforeend", renderComposeModal());
-      attachComposeEvents();
-    });
-
-    // Add account shortcut
-    document.getElementById("ep-add-account-btn")?.addEventListener("click", () => {
-      document.body.insertAdjacentHTML("beforeend", renderSettingsModal());
-      attachModalEvents();
-    });
-
-    // Draft button
-    document.getElementById("ep-draft-btn")?.addEventListener("click", async () => {
-      if (!emailState.activeEmail) return;
-      const instruction = document.getElementById("ep-ai-input")?.value || "";
-      const btn = document.getElementById("ep-draft-btn");
-      btn.textContent = "Drafting...";
-      btn.disabled = true;
-      try {
-        const res = await apiPost("/api/email/draft", {
-          email: emailState.activeEmail,
-          instruction,
-        });
-        emailState.drafts[emailState.activeEmail.id] = res.draft;
-        const textarea = document.getElementById("ep-reply-textarea");
-        if (textarea) textarea.value = res.draft;
-        renderEmailPanel();
-      } catch (err) {
-        alert("Draft error: " + err.message);
-      } finally {
-        btn.textContent = "✦ Draft";
-        btn.disabled = false;
-      }
-    });
-
-    // Send button
-    document.getElementById("ep-send-btn")?.addEventListener("click", async () => {
-      if (!emailState.activeEmail || !emailState.activeAccount) return;
-      const body = document.getElementById("ep-reply-textarea")?.value;
-      if (!body?.trim()) return alert("Reply is empty");
-      const btn = document.getElementById("ep-send-btn");
-      btn.textContent = "Sending...";
-      btn.disabled = true;
-      try {
-        await apiPost("/api/email/send", {
-          account_email: emailState.activeAccount.email,
-          to: emailState.activeEmail.from_email,
-          subject: "Re: " + emailState.activeEmail.subject,
-          body,
-          reply_to_message_id: emailState.activeEmail.message_id,
-        });
-        delete emailState.drafts[emailState.activeEmail.id];
-        alert("Sent!");
-        renderEmailPanel();
-      } catch (err) {
-        alert("Send error: " + err.message);
-      } finally {
-        btn.textContent = "Send ➤";
-        btn.disabled = false;
-      }
-    });
-
-    // Discard button
-    document.getElementById("ep-discard-btn")?.addEventListener("click", () => {
-      if (emailState.activeEmail) {
-        delete emailState.drafts[emailState.activeEmail.id];
-        document.getElementById("ep-reply-textarea").value = "";
-        renderEmailPanel();
-      }
-    });
-
-    // Sync reply textarea with draft state
-    document.getElementById("ep-reply-textarea")?.addEventListener("input", e => {
-      if (emailState.activeEmail) {
-        emailState.drafts[emailState.activeEmail.id] = e.target.value;
-      }
+    document.getElementById("ep3-chat-body")?.addEventListener("click", async e => {
+      const ap = e.target.closest("[data-approve]");
+      if (ap) return approveDraft(ap.dataset.approve);
+      const dd = e.target.closest("[data-discard-draft]");
+      if (dd) { S.chat[S.activeThread] = (S.chat[S.activeThread] || []).filter(m => m.role !== "draft"); render(); }
     });
   }
 
-  function attachModalEvents() {
-    document.getElementById("ep-modal-close")?.addEventListener("click", () => {
-      document.getElementById("ep-modal-overlay")?.remove();
-    });
-    document.getElementById("ep-modal-overlay")?.addEventListener("click", e => {
-      if (e.target.id === "ep-modal-overlay") e.target.remove();
-    });
-
-    // Remove account buttons
-    document.querySelectorAll("[data-remove]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const idx = parseInt(btn.dataset.remove);
-        emailState.accounts.splice(idx, 1);
-        await apiPost("/api/email/accounts", { accounts: emailState.accounts });
-        document.getElementById("ep-modal-overlay")?.remove();
-        renderEmailPanel();
-      });
-    });
-
-    // Save account
-    document.getElementById("ep-save-account-btn")?.addEventListener("click", async () => {
-      const account = {
-        name: document.getElementById("ep-f-name")?.value.trim(),
-        email: document.getElementById("ep-f-email")?.value.trim(),
-        password: document.getElementById("ep-f-password")?.value,
-        imap_host: document.getElementById("ep-f-imap-host")?.value.trim(),
-        imap_port: parseInt(document.getElementById("ep-f-imap-port")?.value) || 993,
-        smtp_host: document.getElementById("ep-f-smtp-host")?.value.trim(),
-        smtp_port: parseInt(document.getElementById("ep-f-smtp-port")?.value) || 587,
-      };
-      if (!account.email || !account.password || !account.imap_host || !account.smtp_host) {
-        return alert("Fill in all required fields");
-      }
-      emailState.accounts.push(account);
-      await apiPost("/api/email/accounts", { accounts: emailState.accounts });
-      document.getElementById("ep-modal-overlay")?.remove();
-      renderEmailPanel();
-    });
+  function renderQueueListOnly() {
+    const list = document.getElementById("ep3-thread-list");
+    if (!list) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = renderQueue();
+    const newList = tmp.querySelector("#ep3-thread-list");
+    if (newList) { list.innerHTML = newList.innerHTML; }
+    // reattach star/thread clicks
+    list.addEventListener("click", () => {}); // events already delegated on parent in attachEvents (re-render safe)
   }
 
-  function attachComposeEvents() {
-    document.getElementById("ep-modal-close")?.addEventListener("click", () => {
-      document.getElementById("ep-modal-overlay")?.remove();
-    });
-    document.getElementById("ep-modal-overlay")?.addEventListener("click", e => {
-      if (e.target.id === "ep-modal-overlay") e.target.remove();
-    });
-    document.getElementById("ep-compose-send-btn")?.addEventListener("click", async () => {
-      if (!emailState.activeAccount) return alert("Select an account first");
-      const to = document.getElementById("ep-c-to")?.value.trim();
-      const subject = document.getElementById("ep-c-subject")?.value.trim();
-      const body = document.getElementById("ep-c-body")?.value.trim();
-      if (!to || !subject || !body) return alert("Fill in all fields");
-      try {
-        await apiPost("/api/email/send", {
-          account_email: emailState.activeAccount.email,
-          to, subject, body,
-        });
-        alert("Sent!");
-        document.getElementById("ep-modal-overlay")?.remove();
-      } catch (err) {
-        alert("Send error: " + err.message);
-      }
-    });
+  // ─── Actions ───────────────────────────────────────────────────────────────
+  function pushMsg(role, text, extra) {
+    if (!S.activeThread) return;
+    if (!S.chat[S.activeThread]) S.chat[S.activeThread] = [];
+    S.chat[S.activeThread].push({ role, text, ...extra });
+    render();
   }
 
-  // ─── Load Emails ─────────────────────────────────────────────────────────
-  async function loadEmails() {
-    if (!emailState.activeAccount) return;
-    emailState.loading = true;
-    renderEmailPanel();
+  async function sendChat() {
+    const input = document.getElementById("ep3-chat-input");
+    const msg = input?.value.trim();
+    if (!msg || !S.activeThread) return;
+    input.value = "";
+    pushMsg("user", msg);
+    pushMsg("agent", "…");
+    const t = S.threads.find(x => x.id === S.activeThread);
     try {
-      const res = await apiPost("/api/email/fetch", {
-        account_email: emailState.activeAccount.email,
-        folder: "INBOX",
-        limit: 30,
+      const res = await apiPost("/api/email/chat", {
+        thread: t?.emails || [],
+        history: (S.chat[S.activeThread] || []).filter(m => m.role === "user" || m.role === "agent").slice(0, -1),
+        message: msg,
+        profile: S.profile,
       });
-      emailState.emails = res.emails || [];
+      // Replace the "…" placeholder
+      const arr = S.chat[S.activeThread];
+      arr.pop(); // remove …
+      arr.push({ role: "agent", text: res.reply || "(no response)" });
+      render();
     } catch (err) {
-      emailState.emails = [];
-      console.error("Email fetch error:", err);
-    } finally {
-      emailState.loading = false;
-      renderEmailPanel();
+      const arr = S.chat[S.activeThread]; arr.pop();
+      arr.push({ role: "agent", text: "Error: " + err.message });
+      render();
     }
   }
 
-  // ─── Init ─────────────────────────────────────────────────────────────────
-  async function initEmailPanel() {
+  async function quickAction(kind) {
+    if (!S.activeThread) return;
+    const t = S.threads.find(x => x.id === S.activeThread);
+    if (kind === "summarize") {
+      pushMsg("user", "Summarize this thread");
+      pushMsg("agent", "…");
+      try {
+        const res = await apiPost("/api/email/summarize", { thread: t.emails, profile: S.profile });
+        const arr = S.chat[S.activeThread]; arr.pop();
+        arr.push({ role: "agent", text: res.summary });
+        render();
+      } catch (err) { const arr = S.chat[S.activeThread]; arr.pop(); arr.push({ role: "agent", text: "Error: " + err.message }); render(); }
+    } else if (kind === "draft") {
+      pushMsg("user", "Draft a reply");
+      pushMsg("agent", "…");
+      const last = t.emails[t.emails.length - 1];
+      try {
+        const res = await apiPost("/api/email/draft", { email: last, instruction: "" });
+        const arr = S.chat[S.activeThread]; arr.pop();
+        arr.push({ role: "draft", text: res.draft, id: S.activeThread });
+        render();
+      } catch (err) { const arr = S.chat[S.activeThread]; arr.pop(); arr.push({ role: "agent", text: "Error: " + err.message }); render(); }
+    }
+  }
+
+  async function approveDraft(threadId) {
+    const t = S.threads.find(x => x.id === threadId);
+    if (!t || !S.activeAccount) return alert("Missing thread or account");
+    const draftEl = document.querySelector(`[data-draft-id="${threadId}"]`);
+    const body = draftEl ? draftEl.innerText : "";
+    const last = t.emails[t.emails.length - 1];
+    if (!confirm(`Send this reply to ${last.from_email}?`)) return;
+    try {
+      await apiPost("/api/email/send", {
+        account_email: S.activeAccount.email,
+        to: last.from_email,
+        subject: "Re: " + (last.subject || t.name),
+        body,
+        reply_to_message_id: last.message_id,
+      });
+      S.chat[threadId] = (S.chat[threadId] || []).filter(m => m.role !== "draft");
+      pushMsg("agent", "✓ Sent to " + last.from_email);
+    } catch (err) {
+      alert("Send failed: " + err.message);
+    }
+  }
+
+  // ─── Settings modal ────────────────────────────────────────────────────────
+  function openSettings() {
+    const html = `
+      <div class="ep3-modal-bg" id="ep3-modal-bg">
+        <div class="ep3-modal">
+          <div class="ep3-modal-head"><span>Email Settings</span><button class="ep3-btn ep3-btn-icon" id="ep3-modal-x">✕</button></div>
+          <div class="ep3-modal-body">
+            <label class="ep3-lbl">Agent profile handling the mailbox</label>
+            <select class="ep3-input" id="ep3-profile-sel"></select>
+
+            <div class="ep3-accounts-list">
+              ${S.accounts.map((a, i) => `<div class="ep3-acct-row"><div><strong>${esc(a.name || a.email)}</strong><br><small>${esc(a.email)}</small></div><button class="ep3-btn ep3-btn-danger ep3-btn-sm" data-rm="${i}">Remove</button></div>`).join("")}
+            </div>
+
+            <div class="ep3-add-form">
+              <h4>Add Account</h4>
+              <input class="ep3-input" id="f-name" placeholder="Display Name" />
+              <input class="ep3-input" id="f-email" placeholder="Email" type="email" />
+              <input class="ep3-input" id="f-pass" placeholder="Password" type="password" />
+              <div class="ep3-row"><input class="ep3-input" id="f-imap" placeholder="IMAP host" /><input class="ep3-input ep3-input-sm" id="f-imap-p" value="993" /></div>
+              <div class="ep3-row"><input class="ep3-input" id="f-smtp" placeholder="SMTP host" /><input class="ep3-input ep3-input-sm" id="f-smtp-p" value="587" /></div>
+              <button class="ep3-btn ep3-btn-primary" id="ep3-save-acct">Save Account</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML("beforeend", html);
+    populateProfiles();
+    const close = () => document.getElementById("ep3-modal-bg")?.remove();
+    document.getElementById("ep3-modal-x").onclick = close;
+    document.getElementById("ep3-modal-bg").onclick = e => { if (e.target.id === "ep3-modal-bg") close(); };
+    document.getElementById("ep3-profile-sel").onchange = async e => {
+      S.profile = e.target.value;
+      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile } }).catch(() => {});
+      render();
+    };
+    document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+      S.accounts.splice(parseInt(b.dataset.rm), 1);
+      await apiPost("/api/email/accounts", { accounts: S.accounts });
+      close(); render();
+    });
+    document.getElementById("ep3-save-acct").onclick = async () => {
+      const acct = {
+        name: document.getElementById("f-name").value.trim(),
+        email: document.getElementById("f-email").value.trim(),
+        password: document.getElementById("f-pass").value,
+        imap_host: document.getElementById("f-imap").value.trim(),
+        imap_port: parseInt(document.getElementById("f-imap-p").value) || 993,
+        smtp_host: document.getElementById("f-smtp").value.trim(),
+        smtp_port: parseInt(document.getElementById("f-smtp-p").value) || 587,
+      };
+      if (!acct.email || !acct.password || !acct.imap_host || !acct.smtp_host) return alert("Fill all fields");
+      S.accounts.push(acct);
+      await apiPost("/api/email/accounts", { accounts: S.accounts });
+      close(); if (!S.activeAccount) S.activeAccount = acct; loadInbox();
+    };
+  }
+
+  async function populateProfiles() {
+    const sel = document.getElementById("ep3-profile-sel");
+    if (!sel) return;
+    let profiles = ["collab-manager", "default"];
+    try {
+      const res = await apiGet("/api/profiles");
+      if (Array.isArray(res?.profiles)) profiles = res.profiles.map(p => p.name || p);
+      else if (Array.isArray(res)) profiles = res.map(p => p.name || p);
+    } catch {}
+    if (!profiles.includes(S.profile)) profiles.unshift(S.profile);
+    sel.innerHTML = profiles.map(p => `<option value="${esc(p)}" ${p === S.profile ? "selected" : ""}>${esc(p)}</option>`).join("");
+  }
+
+  // ─── Load ──────────────────────────────────────────────────────────────────
+  async function loadInbox() {
+    if (!S.activeAccount) { render(); return; }
+    S.loading = true; render();
+    try {
+      const res = await apiPost("/api/email/fetch", { account_email: S.activeAccount.email, folder: "INBOX", limit: 40 });
+      S.emails = res.emails || [];
+      S.threads = groupThreads(S.emails);
+    } catch (err) {
+      console.error("inbox load failed", err);
+      S.emails = []; S.threads = [];
+    } finally {
+      S.loading = false; render();
+    }
+  }
+
+  // ─── SSE for live agent updates ────────────────────────────────────────────
+  function connectSSE() {
+    if (S.sse) return;
+    try {
+      S.sse = new EventSource("/api/email/events");
+      S.sse.onmessage = ev => {
+        try {
+          const { type, data } = JSON.parse(ev.data);
+          if (type === "notification") {
+            // lightweight toast
+            const n = document.createElement("div");
+            n.className = "ep3-toast";
+            n.textContent = data.message;
+            document.body.appendChild(n);
+            setTimeout(() => n.remove(), 5000);
+          }
+          // card_shown / queue_updated could refresh queue — keep simple for now
+        } catch {}
+      };
+      S.sse.onerror = () => { S.sse?.close(); S.sse = null; setTimeout(connectSSE, 5000); };
+    } catch {}
+  }
+
+  // ─── Init ──────────────────────────────────────────────────────────────────
+  async function init() {
     try {
       const res = await apiGet("/api/email/accounts");
-      emailState.accounts = res.accounts || [];
-      if (emailState.accounts.length > 0) {
-        emailState.activeAccount = emailState.accounts[0];
-      }
-    } catch (e) {
-      emailState.accounts = [];
-    }
-    renderEmailPanel();
+      S.accounts = res.accounts || [];
+      if (S.accounts.length) S.activeAccount = S.accounts[0];
+    } catch { S.accounts = []; }
+    try {
+      const st = await apiGet("/api/email/state").catch(() => null);
+    } catch {}
+    try {
+      const settings = await apiPost("/api/email/settings", {}).catch(() => null);
+      if (settings?.profile) S.profile = settings.profile;
+    } catch {}
+    render();
+    if (S.activeAccount) loadInbox();
+    connectSSE();
   }
 
-  // ─── Public API ──────────────────────────────────────────────────────────
-  window.EmailPanel = {
-    open() {
-      // Panel is rendered inside #email-panel div
-      // Called when user clicks the email panel button
-      initEmailPanel();
-    },
-    refresh() {
-      loadEmails();
-    },
-  };
+  window.EmailPanel = { open: init, refresh: loadInbox };
 })();

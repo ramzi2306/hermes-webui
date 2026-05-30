@@ -51,7 +51,7 @@
   function createOverlay(ext) {
     if (document.getElementById(`overlay-${ext.id}`)) return;
 
-    // Full-screen overlay — covers everything including rail + sidebar
+    // Overlay covers everything EXCEPT the rail (rail stays visible on the left)
     const overlay = document.createElement("div");
     overlay.id = `overlay-${ext.id}`;
     overlay.setAttribute("data-overlay", ext.id);
@@ -117,6 +117,15 @@
     document.querySelectorAll("[data-overlay]").forEach(el => el.style.display = "none");
     const overlay = document.getElementById(`overlay-${id}`);
     if (!overlay) return;
+    // Keep the rail visible: offset the overlay's left edge by the rail width
+    const rail = document.querySelector("nav.rail");
+    let railW = 0;
+    if (rail) {
+      const r = rail.getBoundingClientRect();
+      // Only offset on desktop where the rail is a vertical bar on the left
+      if (r.width > 0 && r.width < 120 && r.left < 10) railW = r.width;
+    }
+    overlay.style.left = railW ? railW + "px" : "0";
     overlay.style.display = "flex";
     document.querySelectorAll(`[data-custom-ext="${id}"]`).forEach(b => b.classList.add("active"));
     const ext = CUSTOM_EXTENSIONS.find(e => e.id === id);

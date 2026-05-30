@@ -117,6 +117,38 @@ def register_post(parsed, handler, body, j, bad):
         except Exception as e:
             return bad(handler, str(e), status=500)
 
+    # ── Right-column agent chat ───────────────────────────────────────────────
+    if parsed.path == "/api/email/chat":
+        try:
+            from custom.email.handler import agent_chat
+            reply = agent_chat(
+                thread=body.get("thread", []),
+                history=body.get("history", []),
+                message=body.get("message", ""),
+                profile=body.get("profile"),
+            )
+            return j(handler, {"reply": reply})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/summarize":
+        try:
+            from custom.email.handler import summarize_thread
+            summary = summarize_thread(body.get("thread", []), body.get("profile"))
+            return j(handler, {"summary": summary})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/settings":
+        try:
+            from custom.email.handler import _email_settings, _save_email_settings
+            if body.get("save"):
+                _save_email_settings(body.get("settings", {}))
+                return j(handler, {"ok": True})
+            return j(handler, _email_settings())
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
     # ── Approval endpoints (Ramzi clicks Approve/Reject in browser) ───────────
     if parsed.path == "/api/email/approve":
         try:
