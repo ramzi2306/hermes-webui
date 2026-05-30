@@ -560,6 +560,10 @@
             </div>
             <small style="color:var(--muted);font-size:11px;">Create a bot via @BotFather, get your chat id from @userinfobot.</small>
 
+            <label class="ep3-lbl">Automation</label>
+            <button class="ep3-btn ep3-btn-primary" id="ep3-enable-cron">⏰ Enable 10am &amp; 10pm autopilot</button>
+            <small style="color:var(--muted);font-size:11px;">Creates a scheduled job (webui cron) that runs the agent's email workflow twice daily and sends you a Telegram summary.</small>
+
             <div class="ep3-accounts-list">
               ${S.accounts.map((a, i) => `<div class="ep3-acct-row"><div><strong>${esc(a.name || a.email)}</strong><br><small>${esc(a.email)}</small></div><button class="ep3-btn ep3-btn-danger ep3-btn-sm" data-rm="${i}">Remove</button></div>`).join("")}
             </div>
@@ -599,6 +603,24 @@
       await saveSettings();
       const r = await apiPost("/api/email/telegram/test", { account: S.activeAccount?.email || "" }).catch(e => ({ error: e.message }));
       toast(r.ok ? "Telegram test sent ✓" : ("Telegram: " + (r.error || "failed")));
+    };
+    document.getElementById("ep3-enable-cron").onclick = async () => {
+      const acct = S.activeAccount?.email || "contact@ramzi.digital";
+      const prompt = `Run your email-manager autonomous workflow for ${acct}: 1) email_fetch_inbox to sync, 2) email_preprocess to thread, 3) triage — reorder threads so urgent/business are on top and newsletters at the bottom, 4) email_rework noisy newsletters into one-line summaries, 5) email_save_draft replies for important emails (DO NOT send), 6) email_telegram_summary to send me the grouped summary. Never send email without my approval.`;
+      try {
+        const res = await apiPost("/api/crons/create", {
+          name: "Email autopilot (10am & 10pm)",
+          schedule: "0 10,22 * * *",
+          prompt,
+          profile: S.profile || "collab-manager",
+          deliver: "local",
+          toast_notifications: true,
+        });
+        const id = res?.id || res?.job?.id;
+        toast(id ? "Autopilot scheduled ✓ (10am & 10pm)" : "Created — check the Tasks panel");
+      } catch (err) {
+        toast("Could not create cron: " + err.message);
+      }
     };
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
       S.accounts.splice(parseInt(b.dataset.rm), 1);
