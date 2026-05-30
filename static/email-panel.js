@@ -87,7 +87,7 @@
         <div class="tl-right">
           <div class="run-pill" title="Hermes runs autonomously at 10:00 and 22:00">
             <span class="live"></span>
-            <div class="rp-txt"><b>Synced ${S.lastSync ? timeShort(S.lastSync) : "—"}</b><span>next run 10:00 PM · Telegram ${S.tgChat ? "on" : "off"}</span></div>
+            <div class="rp-txt"><b>Synced ${S.lastSync ? timeShort(S.lastSync) : "—"}</b><span>next run 10:00 PM · Telegram on</span></div>
           </div>
           <button class="btn-run" id="aim-run">${ic("run")} Run now</button>
           <button class="icon-btn" id="aim-settings" title="Settings">${ic("sliders")}</button>
@@ -211,7 +211,7 @@
         <div class="ds-item"><b>${triaged}</b><span>triaged</span></div>
         <div class="ds-item"><b>${reworked}</b><span>cleaned</span></div>
         <div class="ds-item"><b>${drafts}</b><span>drafts</span></div>
-        <div class="ds-tg">${ic("plane")} Telegram ${S.tgChat ? "on" : "off"}</div>
+        <div class="ds-tg">${ic("plane")} Telegram on</div>
       </div>
       <div class="dock-chat"><iframe id="aim-hermes-frame" title="Hermes chat"></iframe></div>
     </div>`;
@@ -377,10 +377,8 @@
             <select class="ep3-input" id="aim-profile"></select>
             <label class="ep3-lbl">Emails to import per folder</label>
             <input class="ep3-input" id="aim-import" type="number" min="10" max="1000" value="${S.importCount}" />
-            <label class="ep3-lbl">Telegram bot token</label>
-            <input class="ep3-input" id="aim-tgtoken" type="password" placeholder="123456:ABC-..." value="${esc(S.tgToken)}" />
-            <label class="ep3-lbl">Telegram chat ID</label>
-            <div class="ep3-row"><input class="ep3-input" id="aim-tgchat" placeholder="123456789" value="${esc(S.tgChat)}" /><button class="ep3-btn ep3-btn-sm" id="aim-tgtest">Test</button></div>
+            <label class="ep3-lbl">Telegram</label>
+            <div class="ep3-row" style="align-items:center"><small style="flex:1;color:var(--muted);font-size:12px;">Summaries go through your existing Hermes gateway bot.</small><button class="ep3-btn ep3-btn-sm" id="aim-tgtest">Test</button></div>
             <label class="ep3-lbl">Automation</label>
             <button class="ep3-btn ep3-btn-primary" id="aim-cron">⏰ Enable 10am &amp; 10pm autopilot</button>
             <div class="ep3-accounts-list">${S.accounts.map((a, i) => `<div class="ep3-acct-row"><div><strong>${esc(a.name || a.email)}</strong><br><small>${esc(a.email)}</small></div><button class="ep3-btn ep3-btn-danger ep3-btn-sm" data-rm="${i}">Remove</button></div>`).join("")}</div>
@@ -403,11 +401,9 @@
     const save = async () => {
       S.profile = document.getElementById("aim-profile")?.value || S.profile;
       S.importCount = parseInt(document.getElementById("aim-import")?.value) || 60;
-      S.tgToken = document.getElementById("aim-tgtoken")?.value.trim() || "";
-      S.tgChat = document.getElementById("aim-tgchat")?.value.trim() || "";
-      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile, import_count: S.importCount, telegram_bot_token: S.tgToken, telegram_chat_id: S.tgChat } }).catch(() => {});
+      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile, import_count: S.importCount } }).catch(() => {});
     };
-    ["aim-profile", "aim-import", "aim-tgtoken", "aim-tgchat"].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = save; });
+    ["aim-profile", "aim-import"].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = save; });
     document.getElementById("aim-tgtest").onclick = async () => { await save(); const r = await apiPost("/api/email/telegram/test", {}).catch(e => ({ error: e.message })); toast(r.ok ? "Telegram test sent ✓" : ("Telegram: " + (r.error || "failed"))); };
     document.getElementById("aim-cron").onclick = async () => {
       const acct = S.activeAccount?.email || "contact@ramzi.digital";
