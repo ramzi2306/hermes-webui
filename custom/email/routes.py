@@ -137,6 +137,7 @@ def register_post(parsed, handler, body, j, bad):
                 history=body.get("history", []),
                 message=body.get("message", ""),
                 profile=body.get("profile"),
+                scope=body.get("scope", "thread"),
             )
             return j(handler, {"reply": reply})
         except Exception as e:

@@ -411,22 +411,36 @@ Write ONLY the email body text. No subject line, no 'Subject:', just the reply b
     return f"Hi {from_name},\n\nThank you for your email.\n\nBest regards,\nRamzi"
 
 
-def agent_chat(thread: list, history: list, message: str, profile: str = None) -> str:
+def agent_chat(thread: list, history: list, message: str, profile: str = None, scope: str = "thread") -> str:
     """
-    Right-column agent chat. Ramzi talks to the email agent about a thread.
-    thread = list of emails in the conversation
-    history = prior chat turns [{role, text}]
-    message = new user message
+    Right-column agent chat.
+    scope='thread' → context is the open thread's emails.
+    scope='global' → context is a digest of the whole mailbox.
     """
-    thread_ctx = _format_thread(thread) if thread else "(no email selected)"
-
     hist_lines = []
     for turn in history[-8:]:
         role = "Ramzi" if turn.get("role") == "user" else "You"
         hist_lines.append(f"{role}: {turn.get('text', '')}")
     hist_ctx = "\n".join(hist_lines) if hist_lines else "(start of conversation)"
 
-    prompt = f"""You are Ramzi's email assistant managing his inbox. You are looking at this email thread:
+    if scope == "global":
+        items = []
+        for t in (thread or [])[:30]:
+            items.append(f"• {t.get('subject','')} — from {t.get('from_name','')} ({t.get('date','')}): {(t.get('body','') or '')[:200]}")
+        ctx = "\n".join(items) if items else "(mailbox empty)"
+        prompt = f"""You are Ramzi's email manager. Here is a digest of his current mailbox:
+
+{ctx}
+
+Conversation so far:
+{hist_ctx}
+
+Ramzi: {message}
+
+Answer about his mailbox: identify urgent items, who needs replies, summarize, prioritize. Concise, in Ramzi's direct warm voice."""
+    else:
+        thread_ctx = _format_thread(thread) if thread else "(no email selected)"
+        prompt = f"""You are Ramzi's email assistant. You are looking at this email thread:
 
 {thread_ctx}
 
@@ -435,15 +449,9 @@ Conversation so far:
 
 Ramzi: {message}
 
-Respond helpfully. You can: summarize the thread, explain context, draft a reply, suggest actions. If Ramzi asks you to draft a reply, write the draft clearly marked. Keep responses concise and in Ramzi's direct, warm voice."""
+Respond helpfully: summarize, explain context, draft a reply, suggest actions. If asked to draft, write the draft clearly. Concise, in Ramzi's direct warm voice."""
 
-    try:
-        out = _run_hermes(prompt, profile=profile, timeout=90)
-        if out:
-            return out
-    except Exception as e:
-        return f"(Agent error: {e})"
-    return "(No response from agent — check that Hermes is running.)"
+    return _run_hermes(prompt, profile=profile, timeout=120)
 
 
 def summarize_thread(thread: list, profile: str = None) -> str:

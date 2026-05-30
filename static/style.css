@@ -4765,3 +4765,21 @@ main.main.showing-logs > #mainLogs{display:flex;}
 .ep3-bubble.recv .ep3-html-frame { background: #fff; }
 /* Tighten bubble padding when it holds an iframe */
 .ep3-bubble:has(.ep3-html-frame) { padding: 8px; max-width: 82%; }
+
+/* Email width 60% + cleaner thread view */
+.ep3-thread-view .ep3-bubble { max-width: 60% !important; min-width: 320px; }
+.ep3-thread-view .ep3-bubble.sent { min-width: 0; }
+.ep3-conversation { padding: 20px 24px; gap: 18px; }
+
+/* Agent chat — global/local scope toggle */
+.ep3-scope { display: flex; gap: 4px; margin-left: auto; }
+.ep3-scope-btn { padding: 3px 10px; font-size: 11px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); border-radius: 12px; cursor: pointer; }
+.ep3-scope-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ep3-chat-head { display: flex; align-items: center; gap: 8px; }
+
+/* Typing indicator */
+.ep3-typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.ep3-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: ep3-bounce 1.2s infinite ease-in-out; }
+.ep3-typing span:nth-child(2) { animation-delay: 0.18s; }
+.ep3-typing span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes ep3-bounce { 0%,80%,100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }

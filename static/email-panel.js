@@ -16,8 +16,10 @@
     loading: false,
     filter: "all",       // all | favorites
     search: "",
-    chat: {},            // threadId -> [{role, text}]
+    chat: {},            // threadId|__global__ -> [{role, text}]
+    chatScope: "thread", // "thread" | "global"
     profile: "collab-manager",
+    importCount: 60,
     sse: null,
   };
 
@@ -191,8 +193,20 @@
 
   // Render email body — HTML in sandboxed iframe (allow-same-origin so we can
   // measure height; NO allow-scripts so embedded JS can't run), else plain text.
+  function cleanEmailHtml(html) {
+    // Strip scripts, external stylesheets/fonts, and event handlers to cut CSP
+    // noise and keep rendering predictable. Inline styles are kept.
+    return String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<link[^>]*>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+      .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+      .replace(/<meta[^>]*http-equiv[^>]*>/gi, "");
+  }
+
   function renderEmailBody(e, idx) {
-    const html = e.body_html;
+    const html = e.body_html ? cleanEmailHtml(e.body_html) : "";
     if (html && html.length > 20) {
       const fid = `epf-${(e.id || "").replace(/[^a-z0-9]/gi, "")}-${idx}`;
       const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
@@ -227,12 +241,31 @@
     });
   }
 
+  // Render markdown-ish: bold, code, links, line breaks
+  function mdLite(text) {
+    let h = esc(text);
+    h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
+    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    h = h.replace(/\n/g, "<br>");
+    return h;
+  }
+
   function renderAgentChat() {
     const t = S.threads.find(x => x.id === S.activeThread);
-    const msgs = (S.chat[S.activeThread] || []);
+    const global = S.chatScope === "global";
+    const chatKey = global ? "__global__" : S.activeThread;
+    const msgs = (S.chat[chatKey] || []);
+    const canChat = global || !!t;
+
     const chatHtml = msgs.length === 0
-      ? `<div class="ep3-chat-hint">${t ? "Ask me about this thread — summarize, draft a reply, or anything." : "Select a thread to start."}</div>`
+      ? `<div class="ep3-chat-hint">${global
+          ? "Ask me anything about your whole mailbox — “any urgent emails?”, “summarize today”, “who needs a reply?”"
+          : (t ? "Ask me about this thread — summarize, draft a reply, or anything." : "Select a thread, or switch to Mailbox scope.")}</div>`
       : msgs.map(m => {
+          if (m.role === "typing") {
+            return `<div class="ep3-msg agent"><div class="ep3-msg-bubble"><span class="ep3-typing"><span></span><span></span><span></span></span></div></div>`;
+          }
           if (m.role === "draft") {
             return `
               <div class="ep3-msg agent">
@@ -246,22 +279,26 @@
                 </div>
               </div>`;
           }
-          return `<div class="ep3-msg ${m.role}"><div class="ep3-msg-bubble">${esc(m.text).replace(/\n/g, "<br>")}</div></div>`;
+          return `<div class="ep3-msg ${m.role}"><div class="ep3-msg-bubble">${mdLite(m.text)}</div></div>`;
         }).join("");
 
     return `
       <div class="ep3-col ep3-agent-chat">
         <div class="ep3-chat-head">
           <span class="ep3-chat-title">🤖 ${esc(S.profile)}</span>
+          <div class="ep3-scope">
+            <button class="ep3-scope-btn ${!global ? "on" : ""}" data-scope="thread">This thread</button>
+            <button class="ep3-scope-btn ${global ? "on" : ""}" data-scope="global">Mailbox</button>
+          </div>
         </div>
         <div class="ep3-chat-body" id="ep3-chat-body">${chatHtml}</div>
         <div class="ep3-chat-actions">
           <button class="ep3-chip" data-quick="draft" ${!t ? "disabled" : ""}>Draft reply</button>
-          <button class="ep3-chip" data-quick="summarize" ${!t ? "disabled" : ""}>Summarize</button>
+          <button class="ep3-chip" data-quick="summarize" ${!canChat ? "disabled" : ""}>${global ? "Summarize inbox" : "Summarize"}</button>
         </div>
         <div class="ep3-chat-input-bar">
-          <textarea class="ep3-chat-input" id="ep3-chat-input" placeholder="Message the agent…" ${!t ? "disabled" : ""}></textarea>
-          <button class="ep3-btn ep3-btn-primary ep3-send" id="ep3-chat-send" ${!t ? "disabled" : ""}>➤</button>
+          <textarea class="ep3-chat-input" id="ep3-chat-input" placeholder="${global ? "Ask about your mailbox…" : "Message the agent…"}" ${!canChat ? "disabled" : ""}></textarea>
+          <button class="ep3-btn ep3-btn-primary ep3-send" id="ep3-chat-send" ${!canChat ? "disabled" : ""}>➤</button>
         </div>
       </div>`;
   }
@@ -296,11 +333,17 @@
     document.getElementById("ep3-chat-send")?.addEventListener("click", sendChat);
     document.getElementById("ep3-chat-input")?.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
     document.querySelectorAll("[data-quick]").forEach(b => b.addEventListener("click", () => quickAction(b.dataset.quick)));
+    document.querySelectorAll("[data-scope]").forEach(b => b.addEventListener("click", () => {
+      S.chatScope = b.dataset.scope === "global" ? "global" : "thread";
+      // only re-render the chat column
+      const right = document.querySelector(".ep3-agent-chat");
+      if (right) { const tmp = document.createElement("div"); tmp.innerHTML = renderAgentChat(); right.replaceWith(tmp.firstElementChild); attachChatEvents(); }
+    }));
     document.getElementById("ep3-chat-body")?.addEventListener("click", async e => {
       const ap = e.target.closest("[data-approve]");
       if (ap) return approveDraft(ap.dataset.approve);
       const dd = e.target.closest("[data-discard-draft]");
-      if (dd) { S.chat[S.activeThread] = (S.chat[S.activeThread] || []).filter(m => m.role !== "draft"); selectThread(S.activeThread); }
+      if (dd) { const k = chatKey(); S.chat[k] = (S.chat[k] || []).filter(m => m.role !== "draft"); render(); }
     });
   }
 
@@ -317,62 +360,76 @@
   }
 
   // ─── Actions ───────────────────────────────────────────────────────────────
+  function chatKey() { return S.chatScope === "global" ? "__global__" : S.activeThread; }
+
   function pushMsg(role, text, extra) {
-    if (!S.activeThread) return;
-    if (!S.chat[S.activeThread]) S.chat[S.activeThread] = [];
-    S.chat[S.activeThread].push({ role, text, ...extra });
+    const key = chatKey();
+    if (!key) return;
+    if (!S.chat[key]) S.chat[key] = [];
+    S.chat[key].push({ role, text, ...extra });
     render();
   }
 
+  function replaceTyping(role, text, extra) {
+    const key = chatKey();
+    const arr = S.chat[key] || [];
+    const i = arr.findIndex(m => m.role === "typing");
+    if (i >= 0) arr.splice(i, 1, { role, text, ...extra });
+    else arr.push({ role, text, ...extra });
+    render();
+  }
+
+  // Build a digest of the whole mailbox for global-scope questions
+  function mailboxDigest() {
+    return S.threads.slice(0, 30).map(t => {
+      const last = t.emails[t.emails.length - 1];
+      return { subject: t.name, from_name: t.participants[0] || "", from_email: last?.from_email || "", date: last?.date || "", body: (last?.body || "").slice(0, 400), count: t.emails.length };
+    });
+  }
+
   async function sendChat() {
+    const global = S.chatScope === "global";
     const input = document.getElementById("ep3-chat-input");
     const msg = input?.value.trim();
-    if (!msg || !S.activeThread) return;
+    const t = S.threads.find(x => x.id === S.activeThread);
+    if (!msg || (!global && !t)) return;
     input.value = "";
     pushMsg("user", msg);
-    pushMsg("agent", "…");
-    const t = S.threads.find(x => x.id === S.activeThread);
+    pushMsg("typing", "");
+    const key = chatKey();
     try {
       const res = await apiPost("/api/email/chat", {
-        thread: t?.emails || [],
-        history: (S.chat[S.activeThread] || []).filter(m => m.role === "user" || m.role === "agent").slice(0, -1),
+        thread: global ? mailboxDigest() : (t?.emails || []),
+        scope: global ? "global" : "thread",
+        history: (S.chat[key] || []).filter(m => m.role === "user" || m.role === "agent").slice(0, -1),
         message: msg,
         profile: S.profile,
       });
-      // Replace the "…" placeholder
-      const arr = S.chat[S.activeThread];
-      arr.pop(); // remove …
-      arr.push({ role: "agent", text: res.reply || "(no response)" });
-      render();
+      replaceTyping("agent", res.reply || "(no response)");
     } catch (err) {
-      const arr = S.chat[S.activeThread]; arr.pop();
-      arr.push({ role: "agent", text: "Error: " + err.message });
-      render();
+      replaceTyping("agent", "Error: " + err.message);
     }
   }
 
   async function quickAction(kind) {
-    if (!S.activeThread) return;
+    const global = S.chatScope === "global";
     const t = S.threads.find(x => x.id === S.activeThread);
     if (kind === "summarize") {
-      pushMsg("user", "Summarize this thread");
-      pushMsg("agent", "…");
+      pushMsg("user", global ? "Summarize my inbox" : "Summarize this thread");
+      pushMsg("typing", "");
       try {
-        const res = await apiPost("/api/email/summarize", { thread: t.emails, profile: S.profile });
-        const arr = S.chat[S.activeThread]; arr.pop();
-        arr.push({ role: "agent", text: res.summary });
-        render();
-      } catch (err) { const arr = S.chat[S.activeThread]; arr.pop(); arr.push({ role: "agent", text: "Error: " + err.message }); render(); }
+        const res = await apiPost("/api/email/summarize", { thread: global ? mailboxDigest() : t.emails, scope: global ? "global" : "thread", profile: S.profile });
+        replaceTyping("agent", res.summary);
+      } catch (err) { replaceTyping("agent", "Error: " + err.message); }
     } else if (kind === "draft") {
+      if (!t) return;
       pushMsg("user", "Draft a reply");
-      pushMsg("agent", "…");
+      pushMsg("typing", "");
       const last = t.emails[t.emails.length - 1];
       try {
         const res = await apiPost("/api/email/draft", { email: last, instruction: "" });
-        const arr = S.chat[S.activeThread]; arr.pop();
-        arr.push({ role: "draft", text: res.draft, id: S.activeThread });
-        render();
-      } catch (err) { const arr = S.chat[S.activeThread]; arr.pop(); arr.push({ role: "agent", text: "Error: " + err.message }); render(); }
+        replaceTyping("draft", res.draft, { id: S.activeThread });
+      } catch (err) { replaceTyping("agent", "Error: " + err.message); }
     }
   }
 
