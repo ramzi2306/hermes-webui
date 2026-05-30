@@ -26,6 +26,7 @@ def _get_email_config_path() -> Path:
 
 
 def load_email_accounts() -> list:
+    """Load accounts. Passwords remain ENCRYPTED in the returned dicts."""
     path = _get_email_config_path()
     if not path.exists():
         return []
@@ -36,9 +37,35 @@ def load_email_accounts() -> list:
 
 
 def save_email_accounts(accounts: list) -> None:
+    """Save accounts, ENCRYPTING any plaintext passwords at rest."""
+    from custom.email.crypto import encrypt
+    safe = []
+    for a in accounts:
+        a = dict(a)
+        if a.get("password"):
+            a["password"] = encrypt(a["password"])  # idempotent if already encrypted
+        safe.append(a)
     path = _get_email_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(accounts, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(safe, indent=2), encoding="utf-8")
+    try:
+        import os, stat
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except Exception:
+        pass
+
+
+def get_account_decrypted(account_email: str) -> Optional[dict]:
+    """Return an account dict with a decrypted '_password_plain' field for connecting."""
+    from custom.email.crypto import decrypt
+    for a in load_email_accounts():
+        if a["email"] == account_email:
+            a = dict(a)
+            a["_password_plain"] = decrypt(a.get("password", ""))
+            # also keep 'password' as plain for legacy callers (handler fetch/send)
+            a["password"] = a["_password_plain"]
+            return a
+    return None
 
 
 def decode_str(s) -> str:
@@ -208,14 +235,37 @@ def send_email(account: dict, to: str, subject: str, body: str, reply_to_message
 
 
 def _email_settings() -> dict:
-    """Load email settings (profile choice, etc.) from state dir."""
+    """Load email settings (profile choice, import limits) from state dir."""
+    defaults = {"profile": "collab-manager", "import_count": 60, "import_days": 0}
     path = STATE_DIR / "email_settings.json"
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return {**defaults, **json.loads(path.read_text(encoding="utf-8"))}
         except Exception:
             pass
-    return {"profile": "collab-manager"}
+    return defaults
+
+
+def sync_inbox(account_email: str, max_per_folder: int = None) -> dict:
+    """Incrementally sync INBOX + Sent into local SQLite store."""
+    from custom.email import store
+    acct = get_account_decrypted(account_email)
+    if not acct:
+        return {"error": f"Account '{account_email}' not found"}
+    if max_per_folder is None:
+        max_per_folder = int(_email_settings().get("import_count", 60))
+    return store.sync_account(acct, max_per_folder=max_per_folder)
+
+
+def get_stored_emails(account_email: str, limit: int = 200) -> list:
+    """Read emails from local store (instant, no IMAP)."""
+    from custom.email import store
+    return store.get_emails(account_email, limit)
+
+
+def get_last_sync(account_email: str) -> float:
+    from custom.email import store
+    return store.get_last_sync(account_email)
 
 
 def _save_email_settings(settings: dict) -> None:
@@ -237,27 +287,57 @@ def _profile_home(profile: str) -> Optional[str]:
     return str(candidate) if candidate.exists() else None
 
 
-def _run_hermes(prompt: str, profile: str = None, timeout: int = 60) -> str:
-    """Run hermes one-shot with optional profile, return stdout."""
-    import subprocess
-    import sys
+def _run_hermes(prompt: str, profile: str = None, timeout: int = 90) -> str:
+    """
+    Ask the agent a one-shot question.
+    Primary path: HTTP POST to the agent's OpenAI-compatible gateway
+    (HERMES_AGENT_URL, default http://hermes-agent:8642).
+    Fallback: in-process subprocess.
+    """
+    # ── 1. HTTP gateway (the running agent with its tools/profile) ──
+    base = os.getenv("HERMES_AGENT_URL", "http://hermes-agent:8642").rstrip("/")
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "model": os.getenv("HERMES_EMAIL_MODEL", "deepseek-v4-pro"),
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }).encode()
+        for path in ("/v1/chat/completions", "/chat/completions"):
+            try:
+                req = urllib.request.Request(
+                    base + path, data=payload,
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                    choices = data.get("choices") or []
+                    if choices:
+                        msg = choices[0].get("message", {}).get("content", "")
+                        if msg.strip():
+                            return msg.strip()
+            except Exception:
+                continue
+    except Exception:
+        pass
 
-    env = dict(os.environ)
-    profile = profile or _email_settings().get("profile", "collab-manager")
-    phome = _profile_home(profile)
-    if phome:
-        env["HERMES_HOME"] = phome
-
-    result = subprocess.run(
-        [sys.executable, "-m", "hermes", "-q", prompt],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=str(Path.home()),
-        env=env,
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
+    # ── 2. Fallback: subprocess CLI ──
+    try:
+        import subprocess, sys
+        env = dict(os.environ)
+        profile = profile or _email_settings().get("profile", "collab-manager")
+        phome = _profile_home(profile)
+        if phome:
+            env["HERMES_HOME"] = phome
+        result = subprocess.run(
+            [sys.executable, "-m", "hermes", "-q", prompt],
+            capture_output=True, text=True, timeout=timeout,
+            cwd=str(Path.home()), env=env,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
     return ""
 
 

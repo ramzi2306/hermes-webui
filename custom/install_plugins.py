@@ -7,14 +7,24 @@ import os
 from pathlib import Path
 
 
+def _hermes_base(hermes_home: Path) -> Path:
+    """Resolve the BASE .hermes dir (not a profile subdir)."""
+    if hermes_home.parent.name == "profiles":
+        return hermes_home.parent.parent
+    return hermes_home
+
+
 def install_custom_plugins():
-    """Copy custom plugins to ~/.hermes/plugins/ so Hermes can load them."""
+    """Copy custom plugins + skills into Hermes home so the agent can load them."""
     hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
-    plugins_dir = hermes_home / "plugins"
+    base = _hermes_base(hermes_home)
+    plugins_dir = base / "plugins"
+    skills_dir = base / "skills"
 
     custom_root = Path(__file__).parent
 
-    for plugin_dir in (custom_root).glob("*/plugin"):
+    # 1. Install plugins (tool handlers + schemas)
+    for plugin_dir in custom_root.glob("*/plugin"):
         if not plugin_dir.is_dir():
             continue
         feature_name = plugin_dir.parent.name
@@ -23,12 +33,24 @@ def install_custom_plugins():
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(str(plugin_dir), str(dest))
-            print(f"[custom] Installed plugin: {feature_name} → {dest}")
+            print(f"[custom] Installed plugin: {feature_name} -> {dest}")
         except Exception as e:
             print(f"[custom] Warning: could not install plugin {feature_name}: {e}")
 
-    # Also enable plugin in config if not already enabled
-    _ensure_plugin_enabled("email", hermes_home)
+    # 2. Install skills (SKILL.md telling the agent HOW to use the tools)
+    for skill_dir in custom_root.glob("*/skill"):
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
+            continue
+        feature_name = skill_dir.parent.name
+        dest = skills_dir / f"{feature_name}-manager"
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(skill_dir / "SKILL.md"), str(dest / "SKILL.md"))
+            print(f"[custom] Installed skill: {feature_name} -> {dest}")
+        except Exception as e:
+            print(f"[custom] Warning: could not install skill {feature_name}: {e}")
+
+    _ensure_plugin_enabled("email", base)
 
 
 def _ensure_plugin_enabled(plugin_name: str, hermes_home: Path):

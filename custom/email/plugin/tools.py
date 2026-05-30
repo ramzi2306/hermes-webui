@@ -62,32 +62,17 @@ def email_list_accounts(**_) -> list:
 
 
 def email_fetch_inbox(account_email: str, folder: str = "INBOX", limit: int = 50, **_) -> list:
-    """Fetch emails — uses dynamic Himalaya config, falls back to IMAP handler."""
-    from custom.email.handler import load_email_accounts, fetch_emails
-    accounts = load_email_accounts()
-    account = next((a for a in accounts if a["email"] == account_email), None)
-    if not account:
-        return [{"error": f"Account '{account_email}' not found. Add it in WebUI Email Settings."}]
-
-    # Try Himalaya with dynamic config
-    ok, output = _run_himalaya(account, [
-        "envelope", "list", "--folder", folder,
-        "--page-size", str(limit), "--output", "json"
-    ])
-    if ok:
-        try:
-            return _json.loads(output)
-        except Exception:
-            pass
-
-    # Fallback: direct IMAP
-    return fetch_emails(account, folder, limit)
+    """Sync inbox+sent into local store, then return stored emails (both directions)."""
+    from custom.email.handler import sync_inbox, get_stored_emails
+    sync = sync_inbox(account_email)
+    if isinstance(sync, dict) and sync.get("error"):
+        return [{"error": sync["error"]}]
+    return get_stored_emails(account_email, limit)
 
 
 def email_send(account_email: str, to: str, subject: str, body: str, reply_to_id: str = None, **_) -> dict:
-    from custom.email.handler import load_email_accounts, send_email
-    accounts = load_email_accounts()
-    account = next((a for a in accounts if a["email"] == account_email), None)
+    from custom.email.handler import get_account_decrypted, send_email
+    account = get_account_decrypted(account_email)
     if not account:
         return {"error": f"Account '{account_email}' not found. Add it in WebUI Email Settings."}
     try:

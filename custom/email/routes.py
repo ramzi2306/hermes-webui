@@ -80,22 +80,33 @@ def register_post(parsed, handler, body, j, bad):
             return bad(handler, str(e), status=500)
 
     if parsed.path == "/api/email/fetch":
+        # Read from local store (instant). Does NOT hit IMAP — use /sync for that.
         try:
-            from custom.email.handler import fetch_emails, load_email_accounts
-            accounts = load_email_accounts()
-            account = next((a for a in accounts if a["email"] == body.get("account_email")), None)
-            if not account:
-                return bad(handler, "Account not found", status=404)
-            emails = fetch_emails(account, body.get("folder", "INBOX"), int(body.get("limit", 30)))
-            return j(handler, {"emails": emails})
+            from custom.email.handler import get_stored_emails, get_last_sync
+            acct = body.get("account_email")
+            emails = get_stored_emails(acct, int(body.get("limit", 200)))
+            return j(handler, {"emails": emails, "last_sync": get_last_sync(acct)})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/sync":
+        # Trigger incremental IMAP sync (INBOX + Sent) into local store.
+        try:
+            from custom.email.handler import sync_inbox, get_stored_emails, get_last_sync
+            acct = body.get("account_email")
+            result = sync_inbox(acct, body.get("max_per_folder"))
+            return j(handler, {
+                "sync": result,
+                "emails": get_stored_emails(acct, int(body.get("limit", 200))),
+                "last_sync": get_last_sync(acct),
+            })
         except Exception as e:
             return bad(handler, str(e), status=500)
 
     if parsed.path == "/api/email/send":
         try:
-            from custom.email.handler import send_email, load_email_accounts
-            accounts = load_email_accounts()
-            account = next((a for a in accounts if a["email"] == body.get("account_email")), None)
+            from custom.email.handler import send_email, get_account_decrypted
+            account = get_account_decrypted(body.get("account_email"))
             if not account:
                 return bad(handler, "Account not found", status=404)
             send_email(

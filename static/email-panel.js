@@ -44,25 +44,21 @@
   function groupThreads(emails) {
     const map = {};
     for (const e of emails) {
-      const key = normalizeSubject(e.subject) || e.from_email || e.id;
+      const key = e.thread_key || normalizeSubject(e.subject) || e.from_email || e.id;
       if (!map[key]) {
-        map[key] = {
-          id: key,
-          name: e.subject || "(no subject)",
-          emails: [],
-          last_ts: 0,
-          participants: new Set(),
-          urgency: "normal",
-        };
+        map[key] = { id: key, name: (e.subject || "(no subject)").replace(/^(re|fwd|fw)\s*:\s*/i, ""), emails: [], last_ts: 0, participants: new Set(), urgency: "normal" };
       }
       map[key].emails.push(e);
       map[key].last_ts = Math.max(map[key].last_ts, e.timestamp || 0);
-      map[key].participants.add(e.from_name || e.from_email);
+      // Show the OTHER party as participant (skip own sent address)
+      const who = e.direction === "sent" ? (e.to || "").split(/[,<]/)[0].trim() : (e.from_name || e.from_email);
+      if (who) map[key].participants.add(who);
     }
     const threads = Object.values(map).map(t => {
       t.emails.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      t.participants = [...t.participants];
-      t.preview = t.emails[t.emails.length - 1]?.preview || "";
+      t.participants = [...t.participants].filter(Boolean);
+      const last = t.emails[t.emails.length - 1];
+      t.preview = last?.preview || "";
       return t;
     });
     threads.sort((a, b) => b.last_ts - a.last_ts);
@@ -142,16 +138,18 @@
     if (!t) {
       return `<div class="ep3-col ep3-thread-view"><div class="ep3-empty"><div class="ep3-empty-ico">✉</div><div>Select a thread</div></div></div>`;
     }
-    const bubbles = t.emails.map(e => {
-      const mine = S.accounts.some(a => (e.from_email || "").includes(a.email));
+    const bubbles = t.emails.map((e, i) => {
+      const mine = e.direction === "sent";
+      const who = mine ? "You" : (e.from_name || e.from_email);
+      const bodyHtml = renderEmailBody(e, i);
       return `
         <div class="ep3-bubble-row ${mine ? "mine" : ""}">
           <div class="ep3-bubble ${mine ? "sent" : "recv"}">
             <div class="ep3-bubble-head">
-              <span class="ep3-bubble-from">${esc(e.from_name || e.from_email)}</span>
-              <span class="ep3-bubble-date">${esc(e.date)}</span>
+              <span class="ep3-bubble-from">${esc(who)}</span>
+              <span class="ep3-bubble-date">${esc(e.date)}${e.has_attachments ? " 📎" : ""}</span>
             </div>
-            <div class="ep3-bubble-body">${esc(e.body).replace(/\n/g, "<br>")}</div>
+            ${bodyHtml}
           </div>
         </div>`;
     }).join("");
@@ -165,6 +163,32 @@
         <div class="ep3-conversation" id="ep3-conversation">${bubbles}</div>
       </div>`;
   }
+
+  // Render email body — HTML in sandboxed iframe, else clean plain text
+  function renderEmailBody(e, idx) {
+    const html = e.body_html;
+    if (html && html.length > 20) {
+      const id = `ep3-frame-${e.id?.replace(/[^a-z0-9]/gi, "")}-${idx}`;
+      // Sandboxed iframe: no scripts, no same-origin. Auto-height via onload.
+      const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
+        body{margin:0;padding:4px 2px;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;word-break:break-word;overflow-x:hidden;}
+        img{max-width:100%;height:auto;} a{color:#0a66c2;} table{max-width:100%;} *{max-width:100%;box-sizing:border-box;}
+      </style></head><body>${html}</body></html>`;
+      const srcdoc = doc.replace(/"/g, "&quot;");
+      return `<iframe class="ep3-html-frame" id="${id}" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}" onload="window.__ep3FrameResize&&window.__ep3FrameResize(this)"></iframe>`;
+    }
+    // Plain text — normalize excessive blank lines
+    const txt = (e.body || "").replace(/\n{3,}/g, "\n\n").trim();
+    return `<div class="ep3-bubble-body">${esc(txt).replace(/\n/g, "<br>")}</div>`;
+  }
+
+  // Auto-resize HTML iframes to content height
+  window.__ep3FrameResize = function (frame) {
+    try {
+      const h = frame.contentWindow.document.body.scrollHeight;
+      frame.style.height = Math.min(h + 8, 600) + "px";
+    } catch { frame.style.height = "200px"; }
+  };
 
   function renderAgentChat() {
     const t = S.threads.find(x => x.id === S.activeThread);
@@ -214,7 +238,7 @@
     }));
     document.getElementById("ep3-add-acct")?.addEventListener("click", openSettings);
     document.getElementById("ep3-settings")?.addEventListener("click", openSettings);
-    document.getElementById("ep3-refresh")?.addEventListener("click", loadInbox);
+    document.getElementById("ep3-refresh")?.addEventListener("click", syncInbox);
     document.getElementById("ep3-fav-filter")?.addEventListener("click", () => { S.filter = S.filter === "favorites" ? "all" : "favorites"; render(); });
     const searchEl = document.getElementById("ep3-search");
     if (searchEl) searchEl.addEventListener("input", e => { S.search = e.target.value; const list = document.getElementById("ep3-thread-list"); if (list) list.innerHTML = renderQueue().match(/ep3-thread-list[^>]*>([\s\S]*?)<\/div>\s*<\/div>\s*$/)?.[1] || list.innerHTML; renderQueueListOnly(); });
@@ -341,6 +365,10 @@
             <label class="ep3-lbl">Agent profile handling the mailbox</label>
             <select class="ep3-input" id="ep3-profile-sel"></select>
 
+            <label class="ep3-lbl">Emails to import per folder (INBOX + Sent)</label>
+            <input class="ep3-input" id="ep3-import-count" type="number" min="10" max="1000" value="${S.importCount || 60}" />
+            <small style="color:var(--muted);font-size:11px;">Higher = more history pulled on each sync. Stored locally.</small>
+
             <div class="ep3-accounts-list">
               ${S.accounts.map((a, i) => `<div class="ep3-acct-row"><div><strong>${esc(a.name || a.email)}</strong><br><small>${esc(a.email)}</small></div><button class="ep3-btn ep3-btn-danger ep3-btn-sm" data-rm="${i}">Remove</button></div>`).join("")}
             </div>
@@ -362,11 +390,13 @@
     const close = () => document.getElementById("ep3-modal-bg")?.remove();
     document.getElementById("ep3-modal-x").onclick = close;
     document.getElementById("ep3-modal-bg").onclick = e => { if (e.target.id === "ep3-modal-bg") close(); };
-    document.getElementById("ep3-profile-sel").onchange = async e => {
-      S.profile = e.target.value;
-      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile } }).catch(() => {});
-      render();
+    const saveSettings = async () => {
+      S.profile = document.getElementById("ep3-profile-sel")?.value || S.profile;
+      S.importCount = parseInt(document.getElementById("ep3-import-count")?.value) || 60;
+      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile, import_count: S.importCount } }).catch(() => {});
     };
+    document.getElementById("ep3-profile-sel").onchange = saveSettings;
+    document.getElementById("ep3-import-count").onchange = saveSettings;
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
       S.accounts.splice(parseInt(b.dataset.rm), 1);
       await apiPost("/api/email/accounts", { accounts: S.accounts });
@@ -404,18 +434,50 @@
 
   // ─── Load ──────────────────────────────────────────────────────────────────
   async function loadInbox() {
+    // Reads from LOCAL STORE (instant). Auto-syncs once if store is empty.
     if (!S.activeAccount) { render(); return; }
     S.loading = true; render();
     try {
-      const res = await apiPost("/api/email/fetch", { account_email: S.activeAccount.email, folder: "INBOX", limit: 40 });
+      const res = await apiPost("/api/email/fetch", { account_email: S.activeAccount.email, limit: 300 });
       S.emails = res.emails || [];
       S.threads = groupThreads(S.emails);
+      S.lastSync = res.last_sync || 0;
+      S.loading = false; render();
+      // First time (empty store) → auto-sync from IMAP
+      if (S.emails.length === 0) { await syncInbox(); }
     } catch (err) {
       console.error("inbox load failed", err);
-      S.emails = []; S.threads = [];
-    } finally {
-      S.loading = false; render();
+      S.emails = []; S.threads = []; S.loading = false; render();
     }
+  }
+
+  async function syncInbox() {
+    // Hits IMAP incrementally (INBOX + Sent), updates store, re-renders.
+    if (!S.activeAccount) return;
+    const btn = document.getElementById("ep3-refresh");
+    if (btn) { btn.classList.add("spinning"); btn.textContent = "⟳"; }
+    S.syncing = true;
+    try {
+      const res = await apiPost("/api/email/sync", { account_email: S.activeAccount.email, limit: 300 });
+      S.emails = res.emails || [];
+      S.threads = groupThreads(S.emails);
+      S.lastSync = res.last_sync || 0;
+      const n = res.sync?.new || 0;
+      if (n > 0) toast(`Synced ${n} new email${n > 1 ? "s" : ""}`);
+      else if (res.sync?.error) toast("Sync error: " + res.sync.error);
+    } catch (err) {
+      toast("Sync failed: " + err.message);
+    } finally {
+      S.syncing = false; render();
+    }
+  }
+
+  function toast(msg) {
+    const n = document.createElement("div");
+    n.className = "ep3-toast";
+    n.textContent = msg;
+    document.body.appendChild(n);
+    setTimeout(() => n.remove(), 4000);
   }
 
   // ─── SSE for live agent updates ────────────────────────────────────────────
@@ -454,6 +516,7 @@
     try {
       const settings = await apiPost("/api/email/settings", {}).catch(() => null);
       if (settings?.profile) S.profile = settings.profile;
+      if (settings?.import_count) S.importCount = settings.import_count;
     } catch {}
     render();
     if (S.activeAccount) loadInbox();
