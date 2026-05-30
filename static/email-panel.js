@@ -35,10 +35,11 @@
   const toggleFav = id => { const f = getFavs(); f[id] ? delete f[id] : f[id] = 1; localStorage.setItem(FAVS_KEY, JSON.stringify(f)); return !!f[id]; };
   const isFav = id => !!getFavs()[id];
 
-  async function apiGet(p) { const r = await fetch(p, { credentials: "same-origin" }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+  // Resolve a path against the app base (handles /session/<id> + subpath mounts)
+  function apiUrl(p) { const rel = p.startsWith("/") ? p.slice(1) : p; return new URL(rel, document.baseURI || location.href).href; }
+  async function apiGet(p) { const r = await fetch(apiUrl(p), { credentials: "include" }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
   async function apiPost(p, b) {
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || window.__CSRF_TOKEN__ || "";
-    const r = await fetch(p, { method: "POST", headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}) }, credentials: "same-origin", body: JSON.stringify(b) });
+    const r = await fetch(apiUrl(p), { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(b) });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
@@ -209,36 +210,19 @@
   function renderEmailBody(e, idx) {
     const html = e.body_html ? cleanEmailHtml(e.body_html) : "";
     if (html && html.length > 20) {
-      const fid = `epf-${(e.id || "").replace(/[^a-z0-9]/gi, "")}-${idx}`;
-      const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
-        html,body{margin:0;padding:0;}
-        body{padding:2px;font:13px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;word-break:break-word;overflow-x:hidden;background:#fff;}
-        img{max-width:100%!important;height:auto!important;} a{color:#0a66c2;}
-        table{max-width:100%!important;width:auto!important;} td,tr{max-width:100%;}
-        *{max-width:100%!important;box-sizing:border-box;}
-      </style></head><body>${html}</body></html>`;
-      const srcdoc = doc.replace(/"/g, "&quot;");
-      return `<iframe class="ep3-html-frame" id="${fid}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}"></iframe>`;
+      // Render INLINE (no iframe) — full width, natural height, no inner scroll.
+      // Wrapped in .ep3-html so scoped CSS forces full-width + responsive images.
+      return `<div class="ep3-html">${html}</div>`;
     }
     const txt = (e.body || "").replace(/\n{3,}/g, "\n\n").trim();
     return `<div class="ep3-bubble-body">${esc(txt).replace(/\n/g, "<br>")}</div>`;
   }
 
-  // Auto-resize all HTML iframes in the thread view to their content height
+  // No-op kept for callers; inline HTML needs no resizing
   function resizeFrames(root) {
-    (root || document).querySelectorAll(".ep3-html-frame").forEach(frame => {
-      const doResize = () => {
-        try {
-          const b = frame.contentWindow.document.body;
-          const h = Math.max(b.scrollHeight, b.offsetHeight);
-          frame.style.height = Math.min(h + 6, 700) + "px";
-        } catch { frame.style.height = "260px"; }
-      };
-      if (frame.contentWindow?.document?.readyState === "complete") doResize();
-      else frame.addEventListener("load", doResize, { once: true });
-      // Re-measure after images load
-      setTimeout(doResize, 300);
-      setTimeout(doResize, 1000);
+    // After inline render, force email links to open in new tab
+    (root || document).querySelectorAll(".ep3-html a").forEach(a => {
+      a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener");
     });
   }
 
@@ -430,8 +414,8 @@
       const streamId = start.stream_id;
       if (!streamId) throw new Error(start.error || "no stream id");
       await new Promise(resolve => {
-        const url = `api/chat/stream?stream_id=${encodeURIComponent(streamId)}&session_id=${encodeURIComponent(sid)}`;
-        const src = new EventSource(url);
+        const url = apiUrl(`api/chat/stream?stream_id=${encodeURIComponent(streamId)}&session_id=${encodeURIComponent(sid)}`);
+        const src = new EventSource(url, { withCredentials: true });
         let settled = false;
         const finish = () => { if (settled) return; settled = true; agentMsg.streaming = false; try { src.close(); } catch {} updateStreamingBubble(agentMsg); resolve(); };
         src.addEventListener("token", e => { try { agentMsg.text += (JSON.parse(e.data).text || ""); updateStreamingBubble(agentMsg); } catch {} });
