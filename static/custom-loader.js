@@ -161,6 +161,25 @@
         }
       }
     }
+    patchSwitchPanel();
+  }
+
+  // When the user clicks any BUILT-IN panel, close all custom overlays so
+  // the email view behaves like a real tab (not a stuck overlay).
+  function patchSwitchPanel() {
+    if (window.__customLoaderPatched) return;
+    const original = window.switchPanel;
+    if (typeof original !== "function") { setTimeout(patchSwitchPanel, 200); return; }
+    window.__customLoaderPatched = true;
+    window.switchPanel = function (name, opts) {
+      const isCustom = CUSTOM_EXTENSIONS.some(e => e.id === name);
+      if (!isCustom) {
+        // leaving for a built-in panel → hide every custom overlay
+        document.querySelectorAll("[data-overlay]").forEach(el => el.style.display = "none");
+        document.querySelectorAll("[data-custom-ext]").forEach(b => b.classList.remove("active"));
+      }
+      return original.apply(this, arguments);
+    };
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

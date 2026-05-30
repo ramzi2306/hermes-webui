@@ -69,6 +69,8 @@
   function render() {
     const root = document.getElementById("email-panel");
     if (!root) return;
+    // Preserve queue scroll position across re-render (fixes scroll-to-top on click)
+    const prevScroll = document.getElementById("ep3-thread-list")?.scrollTop || 0;
     root.innerHTML = `
       <div class="ep3">
         ${renderQueue()}
@@ -76,9 +78,30 @@
         ${renderAgentChat()}
       </div>`;
     attachEvents();
-    // Auto-scroll chat
+    const list = document.getElementById("ep3-thread-list");
+    if (list) list.scrollTop = prevScroll;
     const chatBody = document.getElementById("ep3-chat-body");
     if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  // Select a thread WITHOUT a full re-render (preserves queue scroll & focus)
+  function selectThread(id) {
+    S.activeThread = id;
+    document.querySelectorAll("#ep3-thread-list .ep3-thread").forEach(el =>
+      el.classList.toggle("active", el.dataset.thread === id));
+    const center = document.querySelector(".ep3-thread-view");
+    if (center) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = renderThreadView();
+      center.replaceWith(tmp.firstElementChild);
+    }
+    const right = document.querySelector(".ep3-agent-chat");
+    if (right) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = renderAgentChat();
+      right.replaceWith(tmp.firstElementChild);
+    }
+    attachChatEvents();
   }
 
   function renderQueue() {
@@ -241,36 +264,42 @@
     document.getElementById("ep3-refresh")?.addEventListener("click", syncInbox);
     document.getElementById("ep3-fav-filter")?.addEventListener("click", () => { S.filter = S.filter === "favorites" ? "all" : "favorites"; render(); });
     const searchEl = document.getElementById("ep3-search");
-    if (searchEl) searchEl.addEventListener("input", e => { S.search = e.target.value; const list = document.getElementById("ep3-thread-list"); if (list) list.innerHTML = renderQueue().match(/ep3-thread-list[^>]*>([\s\S]*?)<\/div>\s*<\/div>\s*$/)?.[1] || list.innerHTML; renderQueueListOnly(); });
+    if (searchEl) searchEl.addEventListener("input", e => { S.search = e.target.value; refreshThreadList(); });
 
+    // Thread selection — partial update (no full re-render, preserves scroll)
     document.getElementById("ep3-thread-list")?.addEventListener("click", e => {
       const star = e.target.closest("[data-star]");
       if (star) { e.stopPropagation(); const on = toggleFav(star.dataset.star); star.classList.toggle("on", on); return; }
       const th = e.target.closest("[data-thread]");
-      if (th) { S.activeThread = th.dataset.thread; render(); }
+      if (th) selectThread(th.dataset.thread);
     });
 
+    attachChatEvents();
+  }
+
+  // Chat-column listeners only — re-attached after partial updates
+  function attachChatEvents() {
     document.getElementById("ep3-chat-send")?.addEventListener("click", sendChat);
     document.getElementById("ep3-chat-input")?.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
     document.querySelectorAll("[data-quick]").forEach(b => b.addEventListener("click", () => quickAction(b.dataset.quick)));
-
     document.getElementById("ep3-chat-body")?.addEventListener("click", async e => {
       const ap = e.target.closest("[data-approve]");
       if (ap) return approveDraft(ap.dataset.approve);
       const dd = e.target.closest("[data-discard-draft]");
-      if (dd) { S.chat[S.activeThread] = (S.chat[S.activeThread] || []).filter(m => m.role !== "draft"); render(); }
+      if (dd) { S.chat[S.activeThread] = (S.chat[S.activeThread] || []).filter(m => m.role !== "draft"); selectThread(S.activeThread); }
     });
   }
 
-  function renderQueueListOnly() {
+  // Rebuild only the thread list (for search), preserving scroll
+  function refreshThreadList() {
     const list = document.getElementById("ep3-thread-list");
     if (!list) return;
+    const scroll = list.scrollTop;
     const tmp = document.createElement("div");
     tmp.innerHTML = renderQueue();
-    const newList = tmp.querySelector("#ep3-thread-list");
-    if (newList) { list.innerHTML = newList.innerHTML; }
-    // reattach star/thread clicks
-    list.addEventListener("click", () => {}); // events already delegated on parent in attachEvents (re-render safe)
+    const fresh = tmp.querySelector("#ep3-thread-list");
+    if (fresh) list.innerHTML = fresh.innerHTML;
+    list.scrollTop = scroll;
   }
 
   // ─── Actions ───────────────────────────────────────────────────────────────

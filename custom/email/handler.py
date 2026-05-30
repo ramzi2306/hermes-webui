@@ -236,6 +236,7 @@ def send_email(account: dict, to: str, subject: str, body: str, reply_to_message
 
 def _email_settings() -> dict:
     """Load email settings (profile choice, import limits) from state dir."""
+    from api.config import STATE_DIR
     defaults = {"profile": "collab-manager", "import_count": 60, "import_days": 0}
     path = STATE_DIR / "email_settings.json"
     if path.exists():
@@ -269,6 +270,7 @@ def get_last_sync(account_email: str) -> float:
 
 
 def _save_email_settings(settings: dict) -> None:
+    from api.config import STATE_DIR
     path = STATE_DIR / "email_settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
