@@ -161,3 +161,10 @@ SCHEMAS += [
     {"name": "email_delete_draft", "description": "Delete a draft.",
      "parameters": _S(draft_id={"type": "string"}), "required": ["draft_id"]},
 ]
+
+SCHEMAS += [
+    {"name": "email_telegram_summary", "description": "Send Ramzi a mailbox summary grouped by urgency (top priority / normal / low) on Telegram. Use at the end of an autonomous run.",
+     "parameters": _S(account={"type": "string"}), "required": ["account"]},
+    {"name": "email_telegram_message", "description": "Send Ramzi a custom message on Telegram (e.g. an urgent alert).",
+     "parameters": _S(text={"type": "string"}), "required": ["text"]},
+]

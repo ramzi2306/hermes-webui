@@ -59,6 +59,20 @@ organize his mailbox. Everything you change is reflected live in his WebUI.
 - The account email is the one configured in WebUI settings (e.g.
   `contact@ramzi.digital`). Use `email_list_accounts()` if unsure.
 
+## Autonomous run (scheduled 10:00 & 22:00)
+
+When triggered on a schedule, perform a full pass:
+1. `email_fetch_inbox(account)` — sync new mail.
+2. `email_preprocess(account)` — thread it.
+3. Triage: put urgent/business threads on top via `email_reorder_threads`;
+   push newsletters/promos to the bottom.
+4. `email_rework(id, "<one-line summary>")` for noisy newsletters/promos.
+5. For important emails needing a reply, `email_save_draft(...)` — DO NOT send.
+6. `email_telegram_summary(account)` — send Ramzi the grouped summary.
+   For anything truly urgent, also `email_telegram_message("🔴 …")`.
+
+Never `email_send` autonomously — drafts wait for Ramzi's approval.
+
 ## Example
 
 > Ramzi: "Organize my inbox and summarize the noisy ones."

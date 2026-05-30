@@ -182,6 +182,29 @@ def register_post(parsed, handler, body, j, bad):
         except Exception as e:
             return bad(handler, str(e), status=500)
 
+    # ── Telegram ──────────────────────────────────────────────────────────────
+    if parsed.path == "/api/email/telegram/test":
+        try:
+            from custom.email import telegram
+            return j(handler, telegram.send_message("✅ Hermes mailbox connected to Telegram."))
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/telegram/summary":
+        try:
+            from custom.email import telegram
+            return j(handler, telegram.send_summary(body.get("account", "")))
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    # ── Autonomous run (cron or manual trigger) ───────────────────────────────
+    if parsed.path == "/api/email/run":
+        try:
+            from custom.email.autorun import run_pass
+            return j(handler, run_pass(body.get("account", "")))
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
     # ── Management API (POST) — the agent + UI drive these ────────────────────
     if parsed.path.startswith("/api/email/mgmt/"):
         try:

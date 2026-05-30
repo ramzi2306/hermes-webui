@@ -173,3 +173,16 @@ def email_save_draft(account: str, thread_id: str, body: str, to: str = "", subj
 def email_delete_draft(draft_id: str, **_) -> dict:
     from custom.email import api as eapi
     return eapi.delete_draft(draft_id)
+
+
+# ── Telegram tools ────────────────────────────────────────────────────────────
+
+def email_telegram_summary(account: str, **_) -> dict:
+    """Send Ramzi a mailbox summary (grouped by urgency) on Telegram."""
+    from custom.email import telegram
+    return telegram.send_summary(account)
+
+def email_telegram_message(text: str, **_) -> dict:
+    """Send Ramzi a custom message on Telegram."""
+    from custom.email import telegram
+    return telegram.send_message(text)

@@ -551,6 +551,15 @@
             <input class="ep3-input" id="ep3-import-count" type="number" min="10" max="1000" value="${S.importCount || 60}" />
             <small style="color:var(--muted);font-size:11px;">Higher = more history pulled on each sync. Stored locally.</small>
 
+            <label class="ep3-lbl">Telegram bot token (for summaries)</label>
+            <input class="ep3-input" id="ep3-tg-token" type="password" placeholder="123456:ABC-..." value="${esc(S.tgToken || '')}" />
+            <label class="ep3-lbl">Telegram chat ID (your user/chat)</label>
+            <div class="ep3-row">
+              <input class="ep3-input" id="ep3-tg-chat" placeholder="e.g. 123456789" value="${esc(S.tgChat || '')}" />
+              <button class="ep3-btn ep3-btn-sm" id="ep3-tg-test">Test</button>
+            </div>
+            <small style="color:var(--muted);font-size:11px;">Create a bot via @BotFather, get your chat id from @userinfobot.</small>
+
             <div class="ep3-accounts-list">
               ${S.accounts.map((a, i) => `<div class="ep3-acct-row"><div><strong>${esc(a.name || a.email)}</strong><br><small>${esc(a.email)}</small></div><button class="ep3-btn ep3-btn-danger ep3-btn-sm" data-rm="${i}">Remove</button></div>`).join("")}
             </div>
@@ -575,10 +584,22 @@
     const saveSettings = async () => {
       S.profile = document.getElementById("ep3-profile-sel")?.value || S.profile;
       S.importCount = parseInt(document.getElementById("ep3-import-count")?.value) || 60;
-      await apiPost("/api/email/settings", { save: true, settings: { profile: S.profile, import_count: S.importCount } }).catch(() => {});
+      S.tgToken = document.getElementById("ep3-tg-token")?.value.trim() || "";
+      S.tgChat = document.getElementById("ep3-tg-chat")?.value.trim() || "";
+      await apiPost("/api/email/settings", { save: true, settings: {
+        profile: S.profile, import_count: S.importCount,
+        telegram_bot_token: S.tgToken, telegram_chat_id: S.tgChat,
+      } }).catch(() => {});
     };
     document.getElementById("ep3-profile-sel").onchange = saveSettings;
     document.getElementById("ep3-import-count").onchange = saveSettings;
+    document.getElementById("ep3-tg-token").onchange = saveSettings;
+    document.getElementById("ep3-tg-chat").onchange = saveSettings;
+    document.getElementById("ep3-tg-test").onclick = async () => {
+      await saveSettings();
+      const r = await apiPost("/api/email/telegram/test", { account: S.activeAccount?.email || "" }).catch(e => ({ error: e.message }));
+      toast(r.ok ? "Telegram test sent ✓" : ("Telegram: " + (r.error || "failed")));
+    };
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
       S.accounts.splice(parseInt(b.dataset.rm), 1);
       await apiPost("/api/email/accounts", { accounts: S.accounts });
@@ -731,6 +752,8 @@
       const settings = await apiPost("/api/email/settings", {}).catch(() => null);
       if (settings?.profile) S.profile = settings.profile;
       if (settings?.import_count) S.importCount = settings.import_count;
+      if (settings?.telegram_bot_token) S.tgToken = settings.telegram_bot_token;
+      if (settings?.telegram_chat_id) S.tgChat = settings.telegram_chat_id;
     } catch {}
     render();
     if (S.activeAccount) loadInbox();
