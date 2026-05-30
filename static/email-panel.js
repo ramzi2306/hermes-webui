@@ -20,6 +20,7 @@
     chatScope: "thread", // "thread" | "global"
     profile: "collab-manager",
     importCount: 60,
+    emailSessionId: null,
     sse: null,
   };
 
@@ -387,6 +388,65 @@
     });
   }
 
+  // ─── Real streaming chat (reuses the main Hermes chat pipeline) ─────────────
+  async function ensureEmailSession() {
+    if (S.emailSessionId) return S.emailSessionId;
+    const stored = localStorage.getItem("hermes_email_session");
+    if (stored) { S.emailSessionId = stored; return stored; }
+    const r = await apiPost("/api/session/new", { profile: S.profile });
+    const sid = r.session_id || r.session?.session_id || r.id;
+    S.emailSessionId = sid;
+    if (sid) localStorage.setItem("hermes_email_session", sid);
+    return sid;
+  }
+
+  function updateStreamingBubble(msg) {
+    const body = document.getElementById("ep3-chat-body");
+    if (!body) return;
+    const bubbles = body.querySelectorAll(".ep3-msg.agent .ep3-msg-bubble");
+    const el = bubbles[bubbles.length - 1];
+    if (!el) return;
+    let html = mdLite(msg.text || "");
+    if (msg.tools && msg.tools.length) {
+      html = msg.tools.map(n => `<span class="ep3-tool-chip">⚙ ${esc(n)}</span>`).join(" ") + (html ? "<br>" + html : "");
+    }
+    if (msg.streaming) html += '<span class="ep3-cursor">▋</span>';
+    el.innerHTML = html || '<span class="ep3-typing"><span></span><span></span><span></span></span>';
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function streamSend(displayText, fullPrompt) {
+    const key = chatKey();
+    if (!S.chat[key]) S.chat[key] = [];
+    S.chat[key].push({ role: "user", text: displayText });
+    const agentMsg = { role: "agent", text: "", streaming: true, tools: [] };
+    S.chat[key].push(agentMsg);
+    render();
+    updateStreamingBubble(agentMsg);  // show typing dots immediately
+    try {
+      const sid = await ensureEmailSession();
+      if (!sid) throw new Error("could not create email session");
+      const start = await apiPost("/api/chat/start", { session_id: sid, message: fullPrompt, profile: S.profile });
+      const streamId = start.stream_id;
+      if (!streamId) throw new Error(start.error || "no stream id");
+      await new Promise(resolve => {
+        const url = `api/chat/stream?stream_id=${encodeURIComponent(streamId)}&session_id=${encodeURIComponent(sid)}`;
+        const src = new EventSource(url);
+        let settled = false;
+        const finish = () => { if (settled) return; settled = true; agentMsg.streaming = false; try { src.close(); } catch {} updateStreamingBubble(agentMsg); resolve(); };
+        src.addEventListener("token", e => { try { agentMsg.text += (JSON.parse(e.data).text || ""); updateStreamingBubble(agentMsg); } catch {} });
+        src.addEventListener("interim_assistant", e => { try { const d = JSON.parse(e.data); if (d.text && !d.already_streamed) { agentMsg.text += (agentMsg.text ? "\n\n" : "") + d.text; updateStreamingBubble(agentMsg); } } catch {} });
+        src.addEventListener("tool", e => { try { const n = JSON.parse(e.data).name; if (n && n !== "clarify") { agentMsg.tools.push(n); updateStreamingBubble(agentMsg); } } catch {} });
+        src.addEventListener("done", finish);
+        src.addEventListener("error", () => { if (!agentMsg.text) agentMsg.text = "⚠️ stream error — is the agent running?"; finish(); });
+      });
+    } catch (err) {
+      agentMsg.streaming = false;
+      agentMsg.text = "⚠️ " + err.message;
+      updateStreamingBubble(agentMsg);
+    }
+  }
+
   async function sendChat() {
     const global = S.chatScope === "global";
     const input = document.getElementById("ep3-chat-input");
@@ -394,33 +454,28 @@
     const t = S.threads.find(x => x.id === S.activeThread);
     if (!msg || (!global && !t)) return;
     input.value = "";
-    pushMsg("user", msg);
-    pushMsg("typing", "");
-    const key = chatKey();
-    try {
-      const res = await apiPost("/api/email/chat", {
-        thread: global ? mailboxDigest() : (t?.emails || []),
-        scope: global ? "global" : "thread",
-        history: (S.chat[key] || []).filter(m => m.role === "user" || m.role === "agent").slice(0, -1),
-        message: msg,
-        profile: S.profile,
-      });
-      replaceTyping("agent", res.reply || "(no response)");
-    } catch (err) {
-      replaceTyping("agent", "Error: " + err.message);
+    let ctx;
+    if (global) {
+      const digest = mailboxDigest().map(d => `• ${d.subject} — ${d.from_name} (${d.date}): ${(d.body || "").slice(0, 180)}`).join("\n");
+      ctx = `[Email mailbox context — ${mailboxDigest().length} recent threads]\n${digest}\n\nRamzi asks: ${msg}`;
+    } else {
+      const thread = (t?.emails || []).map(e => `--- ${e.direction === "sent" ? "Ramzi" : (e.from_name || e.from_email)} (${e.date}) ---\n${(e.body || "").slice(0, 1500)}`).join("\n\n");
+      ctx = `[Email thread: "${t.name}"]\n${thread}\n\nRamzi asks: ${msg}`;
     }
+    await streamSend(msg, ctx);
   }
 
   async function quickAction(kind) {
     const global = S.chatScope === "global";
     const t = S.threads.find(x => x.id === S.activeThread);
     if (kind === "summarize") {
-      pushMsg("user", global ? "Summarize my inbox" : "Summarize this thread");
-      pushMsg("typing", "");
-      try {
-        const res = await apiPost("/api/email/summarize", { thread: global ? mailboxDigest() : t.emails, scope: global ? "global" : "thread", profile: S.profile });
-        replaceTyping("agent", res.summary);
-      } catch (err) { replaceTyping("agent", "Error: " + err.message); }
+      if (global) {
+        const digest = mailboxDigest().map(d => `• ${d.subject} — ${d.from_name}: ${(d.body || "").slice(0, 150)}`).join("\n");
+        await streamSend("Summarize my inbox", `[Mailbox digest]\n${digest}\n\nSummarize the key items, flag anything urgent, and tell me who needs a reply.`);
+      } else {
+        const thread = (t.emails || []).map(e => `--- ${e.direction === "sent" ? "Ramzi" : (e.from_name || e.from_email)} ---\n${(e.body || "").slice(0, 1500)}`).join("\n\n");
+        await streamSend("Summarize this thread", `[Thread: "${t.name}"]\n${thread}\n\nSummarize this thread concisely.`);
+      }
     } else if (kind === "draft") {
       if (!t) return;
       pushMsg("user", "Draft a reply");
