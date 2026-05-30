@@ -100,13 +100,10 @@
       tmp.innerHTML = renderThreadView();
       center.replaceWith(tmp.firstElementChild);
     }
-    const right = document.querySelector(".ep3-agent-chat");
-    if (right) {
-      const tmp = document.createElement("div");
-      tmp.innerHTML = renderAgentChat();
-      right.replaceWith(tmp.firstElementChild);
-    }
-    attachChatEvents();
+    // Do NOT rebuild the right column — keep the Hermes chat iframe alive.
+    // Just toggle the "Discuss this thread" button state.
+    const discuss = document.getElementById("ep3-discuss");
+    if (discuss) discuss.disabled = !S.activeThread;
     resizeFrames(document.getElementById("ep3-conversation"));
   }
 
@@ -239,53 +236,65 @@
   function renderAgentChat() {
     const t = S.threads.find(x => x.id === S.activeThread);
     const global = S.chatScope === "global";
-    const chatKey = global ? "__global__" : S.activeThread;
-    const msgs = (S.chat[chatKey] || []);
-    const canChat = global || !!t;
-
-    const chatHtml = msgs.length === 0
-      ? `<div class="ep3-chat-hint">${global
-          ? "Ask me anything about your whole mailbox — “any urgent emails?”, “summarize today”, “who needs a reply?”"
-          : (t ? "Ask me about this thread — summarize, draft a reply, or anything." : "Select a thread, or switch to Mailbox scope.")}</div>`
-      : msgs.map(m => {
-          if (m.role === "typing") {
-            return `<div class="ep3-msg agent"><div class="ep3-msg-bubble"><span class="ep3-typing"><span></span><span></span><span></span></span></div></div>`;
-          }
-          if (m.role === "draft") {
-            return `
-              <div class="ep3-msg agent">
-                <div class="ep3-draft-card">
-                  <div class="ep3-draft-label">📝 Draft Reply</div>
-                  <div class="ep3-draft-body" contenteditable="true" data-draft-id="${esc(m.id || '')}">${esc(m.text).replace(/\n/g, "<br>")}</div>
-                  <div class="ep3-draft-actions">
-                    <button class="ep3-btn ep3-btn-primary" data-approve="${esc(m.id || '')}">✓ Approve & Send</button>
-                    <button class="ep3-btn" data-discard-draft="1">Discard</button>
-                  </div>
-                </div>
-              </div>`;
-          }
-          return `<div class="ep3-msg ${m.role}"><div class="ep3-msg-bubble">${mdLite(m.text)}</div></div>`;
-        }).join("");
-
+    // The RIGHT panel is the REAL Hermes chat, embedded via iframe (same-origin),
+    // pointed at a dedicated email session with the rail/sidebar hidden.
     return `
       <div class="ep3-col ep3-agent-chat">
         <div class="ep3-chat-head">
-          <span class="ep3-chat-title">🤖 ${esc(S.profile)}</span>
-          <div class="ep3-scope">
-            <button class="ep3-scope-btn ${!global ? "on" : ""}" data-scope="thread">This thread</button>
-            <button class="ep3-scope-btn ${global ? "on" : ""}" data-scope="global">Mailbox</button>
-          </div>
+          <span class="ep3-chat-title">🤖 Hermes</span>
+          <button class="ep3-btn ep3-btn-sm" id="ep3-discuss" ${!t ? "disabled" : ""}>↳ Discuss this thread</button>
         </div>
-        <div class="ep3-chat-body" id="ep3-chat-body">${chatHtml}</div>
-        <div class="ep3-chat-actions">
-          <button class="ep3-chip" data-quick="draft" ${!t ? "disabled" : ""}>Draft reply</button>
-          <button class="ep3-chip" data-quick="summarize" ${!canChat ? "disabled" : ""}>${global ? "Summarize inbox" : "Summarize"}</button>
-        </div>
-        <div class="ep3-chat-input-bar">
-          <textarea class="ep3-chat-input" id="ep3-chat-input" placeholder="${global ? "Ask about your mailbox…" : "Message the agent…"}" ${!canChat ? "disabled" : ""}></textarea>
-          <button class="ep3-btn ep3-btn-primary ep3-send" id="ep3-chat-send" ${!canChat ? "disabled" : ""}>➤</button>
-        </div>
+        <iframe id="ep3-hermes-frame" class="ep3-hermes-frame" title="Hermes chat"></iframe>
       </div>`;
+  }
+
+  // ─── Embed the real Hermes chat ─────────────────────────────────────────────
+  async function initHermesChat() {
+    const frame = document.getElementById("ep3-hermes-frame");
+    if (!frame) return;
+    if (frame.dataset.loaded === "1") return;  // don't reload on every render
+    try {
+      const sid = await ensureEmailSession();
+      if (!sid) { frame.outerHTML = '<div class="ep3-chat-hint">Could not start chat session.</div>'; return; }
+      frame.dataset.loaded = "1";
+      frame.src = apiUrl("session/" + encodeURIComponent(sid));
+      frame.addEventListener("load", () => {
+        try {
+          const doc = frame.contentDocument;
+          if (!doc) return;
+          // Inject CSS to strip the app chrome → only the chat remains
+          const style = doc.createElement("style");
+          style.textContent = `
+            nav.rail, aside.sidebar, .app-titlebar, .mobile-nav, #mobileOverlay,
+            .rail, .titlebar, .window-controls { display: none !important; }
+            .layout { grid-template-columns: 1fr !important; display: block !important; }
+            main.main, .main { width: 100% !important; margin: 0 !important; left: 0 !important; }
+            body, html { overflow: hidden !important; }
+          `;
+          doc.head.appendChild(style);
+        } catch (e) { /* cross-origin shouldn't happen (same origin) */ }
+      }, { once: true });
+    } catch (e) {
+      frame.outerHTML = `<div class="ep3-chat-hint">Chat error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // Type the current thread into the embedded Hermes composer and send it
+  function discussThread() {
+    const t = S.threads.find(x => x.id === S.activeThread);
+    const frame = document.getElementById("ep3-hermes-frame");
+    if (!t || !frame) return;
+    try {
+      const doc = frame.contentDocument;
+      const input = doc.getElementById("msg") || doc.querySelector("textarea");
+      if (!input) return toast("Chat not ready yet — try again in a moment.");
+      const thread = (t.emails || []).map(e => `--- ${e.direction === "sent" ? "Ramzi" : (e.from_name || e.from_email)} (${e.date}) ---\n${(e.body || "").slice(0, 1500)}`).join("\n\n");
+      input.value = `Here is an email thread from my inbox titled "${t.name}". Help me with it (summarize, draft a reply, etc.):\n\n${thread}`;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const sendBtn = doc.getElementById("sendBtn") || doc.querySelector('[onclick*="send"], button.send');
+      if (sendBtn) sendBtn.click();
+      else if (frame.contentWindow.send) frame.contentWindow.send();
+    } catch (e) { toast("Could not pass thread to chat: " + e.message); }
   }
 
   // ─── Events ────────────────────────────────────────────────────────────────
@@ -311,25 +320,12 @@
     });
 
     attachChatEvents();
+    initHermesChat();
   }
 
-  // Chat-column listeners only — re-attached after partial updates
+  // Wire the embedded-chat toolbar
   function attachChatEvents() {
-    document.getElementById("ep3-chat-send")?.addEventListener("click", sendChat);
-    document.getElementById("ep3-chat-input")?.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
-    document.querySelectorAll("[data-quick]").forEach(b => b.addEventListener("click", () => quickAction(b.dataset.quick)));
-    document.querySelectorAll("[data-scope]").forEach(b => b.addEventListener("click", () => {
-      S.chatScope = b.dataset.scope === "global" ? "global" : "thread";
-      // only re-render the chat column
-      const right = document.querySelector(".ep3-agent-chat");
-      if (right) { const tmp = document.createElement("div"); tmp.innerHTML = renderAgentChat(); right.replaceWith(tmp.firstElementChild); attachChatEvents(); }
-    }));
-    document.getElementById("ep3-chat-body")?.addEventListener("click", async e => {
-      const ap = e.target.closest("[data-approve]");
-      if (ap) return approveDraft(ap.dataset.approve);
-      const dd = e.target.closest("[data-discard-draft]");
-      if (dd) { const k = chatKey(); S.chat[k] = (S.chat[k] || []).filter(m => m.role !== "draft"); render(); }
-    });
+    document.getElementById("ep3-discuss")?.addEventListener("click", discussThread);
   }
 
   // Rebuild only the thread list (for search), preserving scroll

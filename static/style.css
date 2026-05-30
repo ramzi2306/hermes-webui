@@ -4804,3 +4804,7 @@ main.main.showing-logs > #mainLogs{display:flex;}
 .ep3-html font { font-size: inherit !important; }
 /* The email bubble: no fixed height, no inner scroll — let conversation scroll */
 .ep3-thread-view .ep3-bubble { max-height: none !important; overflow: visible !important; }
+
+/* Embedded real Hermes chat iframe in the email right panel */
+.ep3-hermes-frame { flex: 1; width: 100%; border: none; background: var(--bg); display: block; }
+.ep3-agent-chat { width: 420px; min-width: 360px; }
