@@ -23,6 +23,21 @@ def install_custom_plugins():
 
     custom_root = Path(__file__).parent
 
+    # 0. Bundle the WHOLE custom package into the shared Hermes home so the
+    #    AGENT container (separate from webui) can `import custom.email`.
+    #    base is on the shared hermes-home volume → agent sees the same files.
+    try:
+        pkg_dest = base / "custom"
+        if pkg_dest.exists():
+            shutil.rmtree(pkg_dest)
+        shutil.copytree(
+            str(custom_root), str(pkg_dest),
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".gitignore"),
+        )
+        print(f"[custom] Bundled custom package -> {pkg_dest} (importable by agent)")
+    except Exception as e:
+        print(f"[custom] Warning: could not bundle custom package: {e}")
+
     # 1. Install plugins (tool handlers + schemas)
     for plugin_dir in custom_root.glob("*/plugin"):
         if not plugin_dir.is_dir():

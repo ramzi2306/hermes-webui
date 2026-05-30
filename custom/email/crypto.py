@@ -13,8 +13,8 @@ _PREFIX = "enc:v1:"
 
 
 def _key_path() -> Path:
-    from api.config import STATE_DIR
-    return STATE_DIR / ".email_key"
+    from custom.email.paths import state_dir
+    return state_dir() / ".email_key"
 
 
 def _get_fernet():

@@ -1,10 +1,17 @@
 """Tool handlers — code that runs when Hermes calls an email tool."""
 import sys, os, tempfile, subprocess, json as _json
 
+# Make `custom.email.*` importable in BOTH containers:
+#  - webui: this file lives in /apptoo/custom/email/plugin → webui root is 3 up
+#  - agent: bundled at <HERMES_HOME>/custom/email/plugin → add the dir holding `custom`
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_WEBUI_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
-if _WEBUI_ROOT not in sys.path:
-    sys.path.insert(0, _WEBUI_ROOT)
+for _cand in (
+    os.path.dirname(os.path.dirname(os.path.dirname(_HERE))),  # .../<root>  (webui /apptoo)
+    os.getenv("HERMES_HOME") or "",                            # agent: <home>/custom/email/...
+    os.path.expanduser("~/.hermes"),
+):
+    if _cand and os.path.isdir(os.path.join(_cand, "custom", "email")) and _cand not in sys.path:
+        sys.path.insert(0, _cand)
 
 
 # ── Dynamic Himalaya config generator ────────────────────────────────────────

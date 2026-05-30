@@ -21,8 +21,8 @@ from typing import Optional
 
 
 def _get_email_config_path() -> Path:
-    from api.config import STATE_DIR
-    return STATE_DIR / "email_accounts.json"
+    from custom.email.paths import state_dir
+    return state_dir() / "email_accounts.json"
 
 
 def load_email_accounts() -> list:
@@ -236,9 +236,9 @@ def send_email(account: dict, to: str, subject: str, body: str, reply_to_message
 
 def _email_settings() -> dict:
     """Load email settings (profile choice, import limits) from state dir."""
-    from api.config import STATE_DIR
+    from custom.email.paths import state_dir
     defaults = {"profile": "collab-manager", "import_count": 60, "import_days": 0}
-    path = STATE_DIR / "email_settings.json"
+    path = state_dir() / "email_settings.json"
     if path.exists():
         try:
             return {**defaults, **json.loads(path.read_text(encoding="utf-8"))}
@@ -270,8 +270,8 @@ def get_last_sync(account_email: str) -> float:
 
 
 def _save_email_settings(settings: dict) -> None:
-    from api.config import STATE_DIR
-    path = STATE_DIR / "email_settings.json"
+    from custom.email.paths import state_dir
+    path = state_dir() / "email_settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 

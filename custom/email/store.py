@@ -23,8 +23,8 @@ _SENT_CANDIDATES = ["Sent", "Sent Items", "INBOX.Sent", "Sent Messages", "[Gmail
 
 
 def _db_path() -> Path:
-    from api.config import STATE_DIR
-    return STATE_DIR / "emails.db"
+    from custom.email.paths import state_dir
+    return state_dir() / "emails.db"
 
 
 def _conn():
