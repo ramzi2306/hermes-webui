@@ -1,0 +1,168 @@
+/* ============================================================
+   Hermes · AI Mail — Triage Stack design, scoped under .aimail
+   Adapted from the Claude Design handoff. All rules namespaced so
+   they never collide with the host WebUI styles.
+   ============================================================ */
+.aimail{
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --bg:#ffffff; --list:#fafafb; --sidebar:#f4f4f6;
+  --ink:#1b1b1f; --ink-2:#46464c; --ink-3:#8a8a93; --ink-4:#b4b4bc;
+  --hair:rgba(20,20,30,.085); --hair-2:rgba(20,20,30,.05);
+  --accent:#6E56CF; --accent-ink:#fff;
+  --accent-soft:color-mix(in srgb, var(--accent) 11%, #fff);
+  --accent-line:color-mix(in srgb, var(--accent) 38%, #fff);
+  --sel:color-mix(in srgb, var(--accent) 13%, #fff);
+  --u-urgent:#E5484D; --u-today:#E8922B; --u-later:#5B7FB4; --u-fyi:#9AA0A6;
+  --row-pad:13px; --read-pad:30px; --font:14.5px;
+  --shadow-card:0 1px 2px rgba(20,20,40,.05), 0 1px 1px rgba(20,20,40,.03);
+  --shadow-pop:0 12px 34px rgba(20,20,40,.16), 0 2px 8px rgba(20,20,40,.08);
+
+  height:100%; display:flex; flex-direction:column; background:var(--bg);
+  font-family:var(--sans); font-size:var(--font); color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+}
+.aimail *{box-sizing:border-box;}
+.aimail button{font-family:inherit;}
+
+/* ---- toolbar ---- */
+.aimail .toolbar{height:54px;flex:0 0 54px;display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:linear-gradient(180deg,#fbfbfd,#f3f3f6);border-bottom:1px solid var(--hair);position:relative;z-index:30;}
+.aimail .view-seg{display:flex;gap:2px;background:#ececf0;border-radius:9px;padding:2px;flex:0 0 auto;}
+.aimail .view-seg button{display:flex;align-items:center;gap:5px;border:none;background:transparent;font-size:12.5px;font-weight:600;color:var(--ink-3);padding:5px 11px;border-radius:7px;cursor:pointer;white-space:nowrap;}
+.aimail .view-seg button svg{width:14px;height:14px;}
+.aimail .view-seg button:hover{color:var(--ink-2);}
+.aimail .view-seg button.on{background:#fff;color:var(--accent);box-shadow:var(--shadow-card);}
+.aimail .search{flex:0 1 360px;margin:0 auto;display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:9px;background:#ececf0;color:var(--ink-3);font-size:13.5px;}
+.aimail .search svg{width:15px;height:15px;flex:0 0 15px;}
+.aimail .search input{border:none;background:transparent;outline:none;flex:1;font:inherit;color:var(--ink);}
+.aimail .search input::placeholder{color:var(--ink-4);}
+.aimail .search kbd{font:inherit;font-size:11px;color:var(--ink-4);border:1px solid var(--hair);border-radius:5px;padding:1px 5px;background:#fff;}
+.aimail .tl-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.aimail .run-pill{display:flex;align-items:center;gap:9px;height:34px;padding:0 12px 0 10px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--accent-line);}
+.aimail .run-pill .live{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:aim-pulse 2.4s infinite;}
+@keyframes aim-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent);}70%{box-shadow:0 0 0 7px transparent;}100%{box-shadow:0 0 0 0 transparent;}}
+.aimail .run-pill .rp-txt{font-size:12px;line-height:1.1;color:color-mix(in srgb,var(--accent) 72%, #222);}
+.aimail .run-pill .rp-txt b{display:block;font-weight:700;font-size:12px;}
+.aimail .run-pill .rp-txt span{color:color-mix(in srgb,var(--accent) 60%, #555);}
+.aimail .btn-run{height:34px;padding:0 13px;border-radius:10px;border:1px solid var(--hair);background:#fff;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;display:flex;align-items:center;gap:6px;}
+.aimail .btn-run:hover{background:#f6f6f9;}
+.aimail .btn-run svg{width:14px;height:14px;}
+.aimail .icon-btn{width:30px;height:30px;border:none;background:transparent;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);cursor:pointer;}
+.aimail .icon-btn:hover{background:rgba(20,20,40,.06);}
+.aimail .icon-btn svg{width:18px;height:18px;}
+.aimail .tl-acct{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer;}
+
+/* ---- body columns ---- */
+.aimail .cols{flex:1;display:flex;min-height:0;}
+
+/* ---- list + lanes ---- */
+.aimail .list{width:368px;flex:0 0 368px;background:var(--list);border-right:1px solid var(--hair);display:flex;flex-direction:column;overflow:hidden;}
+.aimail .list-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
+.aimail .list-head h2{margin:0;font-size:19px;font-weight:700;letter-spacing:-.02em;}
+.aimail .list-sub{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--accent);font-weight:600;}
+.aimail .list-sub svg{width:12px;height:12px;}
+.aimail .list-scroll{flex:1;overflow:auto;padding:0 10px 16px;}
+.aimail .lane{margin-top:8px;}
+.aimail .lane-h{display:flex;align-items:center;gap:8px;padding:10px 8px 7px;position:sticky;top:0;z-index:2;background:linear-gradient(180deg,var(--list) 70%, transparent);}
+.aimail .lane-h .bar{width:3px;height:13px;border-radius:3px;}
+.aimail .lane-h.urgent .bar{background:var(--u-urgent);}
+.aimail .lane-h.today .bar{background:var(--u-today);}
+.aimail .lane-h.later .bar{background:var(--u-later);}
+.aimail .lane-h.fyi .bar{background:var(--u-fyi);}
+.aimail .lane-h .nm{font-size:12px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-2);}
+.aimail .lane-h .ct{font-size:11.5px;color:var(--ink-4);}
+.aimail .lane-h .why{margin-left:auto;font-size:11px;color:var(--ink-4);font-style:italic;}
+.aimail .row{display:flex;gap:11px;padding:var(--row-pad);border-radius:11px;cursor:pointer;margin-bottom:3px;position:relative;transition:background .12s;}
+.aimail .row:hover{background:rgba(20,20,40,.038);}
+.aimail .row.sel{background:var(--sel);}
+.aimail .row.sel::before{content:"";position:absolute;left:3px;top:13px;bottom:13px;width:3px;border-radius:3px;background:var(--accent);}
+.aimail .av{border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;}
+.aimail .row .av{width:36px;height:36px;flex:0 0 36px;font-size:14px;}
+.aimail .row .mid{flex:1;min-width:0;}
+.aimail .row .l1{display:flex;align-items:baseline;gap:8px;}
+.aimail .row .from{font-weight:650;font-size:14px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.aimail .row .time{margin-left:auto;font-size:11.5px;color:var(--ink-4);white-space:nowrap;}
+.aimail .row .subj{font-size:13.5px;font-weight:600;color:var(--ink);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.aimail .row .snip{font-size:13px;color:var(--ink-3);line-height:1.35;margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.aimail .row .tags{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap;}
+.aimail .tag{display:inline-flex;align-items:center;gap:4px;height:19px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:600;color:var(--ink-3);background:#fff;border:1px solid var(--hair);}
+.aimail .tag svg{width:11px;height:11px;}
+.aimail .tag.ai{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-line);}
+.aimail .tag.draft{color:#fff;background:var(--accent);border-color:var(--accent);}
+
+/* ---- reading pane ---- */
+.aimail .reading{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);overflow:hidden;}
+.aimail .read-bar{display:flex;align-items:center;gap:6px;height:46px;flex:0 0 46px;padding:0 14px;border-bottom:1px solid var(--hair);}
+.aimail .read-bar .spacer{flex:1;}
+.aimail .read-scroll{flex:1;overflow:auto;}
+.aimail .read-inner{max-width:760px;margin:0 auto;padding:var(--read-pad) var(--read-pad) 40px;}
+.aimail .read-subj{font-size:26px;font-weight:700;letter-spacing:-.025em;line-height:1.15;margin:0 0 4px;}
+.aimail .read-namedby{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--accent);font-weight:600;margin-bottom:18px;}
+.aimail .read-namedby svg{width:13px;height:13px;}
+.aimail .msg-head{display:flex;align-items:center;gap:12px;margin-bottom:8px;}
+.aimail .msg-head .av{width:42px;height:42px;flex:0 0 42px;font-size:16px;}
+.aimail .msg-head .mh-mid{flex:1;min-width:0;}
+.aimail .msg-head .mh-from{font-weight:650;font-size:15px;}
+.aimail .msg-head .mh-to{font-size:12.5px;color:var(--ink-3);}
+.aimail .msg-head .mh-time{font-size:12.5px;color:var(--ink-3);white-space:nowrap;}
+.aimail .clean-strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--accent-line);margin:6px 0 18px;}
+.aimail .clean-strip .cs-txt{font-size:12.5px;color:color-mix(in srgb,var(--accent) 78%,#222);font-weight:550;display:flex;align-items:center;gap:7px;}
+.aimail .clean-strip .cs-txt svg{width:15px;height:15px;color:var(--accent);}
+.aimail .clean-strip .spacer{flex:1;}
+.aimail .link-btn{border:none;background:transparent;color:var(--accent);font:inherit;font-size:12.5px;font-weight:650;cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:6px;}
+.aimail .link-btn:hover{background:color-mix(in srgb,var(--accent) 14%,#fff);}
+.aimail .link-btn svg{width:13px;height:13px;transition:transform .2s;}
+.aimail .link-btn.open svg{transform:rotate(180deg);}
+.aimail .orig{overflow:hidden;max-height:0;opacity:0;transition:max-height .32s ease,opacity .25s ease,margin .3s;margin:0;}
+.aimail .orig.show{max-height:1200px;opacity:1;margin:0 0 20px;}
+.aimail .orig-inner{border-left:3px solid var(--hair);padding:4px 0 4px 16px;margin-top:2px;}
+.aimail .orig-inner .ol{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4);font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.aimail .orig-inner .ot{font-size:14px;line-height:1.6;color:var(--ink-3);white-space:pre-line;}
+.aimail .read-body{font-size:15.5px;line-height:1.62;color:var(--ink);}
+.aimail .read-body p{margin:0 0 15px;}
+.aimail .read-body .lead{font-weight:600;}
+
+/* ---- draft bubble ---- */
+.aimail .draft{margin-top:8px;border-radius:16px;padding:16px 18px;position:relative;border:1.5px dashed var(--accent-line);background:var(--accent-soft);}
+.aimail .draft.sent{border:1px solid #cfe8d6;background:#f3faf5;}
+.aimail .draft .d-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.aimail .draft .d-av{width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;}
+.aimail .draft .d-av svg{width:15px;height:15px;}
+.aimail .draft .d-lbl{font-size:12.5px;font-weight:700;color:var(--accent);}
+.aimail .draft .d-lbl span{font-weight:500;color:color-mix(in srgb,var(--accent) 55%,#666);}
+.aimail .draft.sent .d-av{background:#2f9e5e;}
+.aimail .draft.sent .d-lbl{color:#2f7d4f;}
+.aimail .draft .d-to{font-size:12.5px;color:var(--ink-3);margin-bottom:8px;}
+.aimail .draft .d-body{font-size:14.8px;line-height:1.58;color:var(--ink-2);border:none;background:transparent;width:100%;resize:none;font-family:inherit;outline:none;min-height:96px;}
+.aimail .draft .d-acts{display:flex;align-items:center;gap:9px;margin-top:12px;}
+.aimail .btn{height:34px;padding:0 16px;border-radius:9px;border:1px solid var(--hair);background:#fff;color:var(--ink);font-size:13.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:7px;}
+.aimail .btn:hover{background:#f6f6f9;}
+.aimail .btn svg{width:15px;height:15px;}
+.aimail .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.aimail .btn.primary:hover{filter:brightness(1.06);}
+.aimail .btn.ghost{border-color:transparent;background:transparent;color:var(--ink-3);}
+.aimail .btn.ghost:hover{background:rgba(20,20,40,.05);}
+.aimail .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--ink-4);gap:12px;}
+.aimail .empty svg{width:44px;height:44px;opacity:.5;}
+
+/* ---- Hermes dock (header+stats above the REAL chat iframe) ---- */
+.aimail .dock{width:380px;flex:0 0 380px;background:var(--sidebar);border-left:1px solid var(--hair);display:flex;flex-direction:column;overflow:hidden;}
+.aimail .dock-head{padding:14px 16px;border-bottom:1px solid var(--hair);display:flex;align-items:center;gap:11px;background:linear-gradient(180deg,#f8f8fb,var(--sidebar));}
+.aimail .dock-head .h-av{width:34px;height:34px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;}
+.aimail .dock-head .h-av svg{width:19px;height:19px;}
+.aimail .dock-head .h-mid{flex:1;line-height:1.2;}
+.aimail .dock-head .h-mid b{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px;}
+.aimail .dock-head .h-mid b .live{width:7px;height:7px;border-radius:50%;background:#2f9e5e;}
+.aimail .dock-head .h-mid span{font-size:11.5px;color:var(--ink-3);}
+.aimail .dock-stats{display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--hair);background:#fff;}
+.aimail .ds-item{display:flex;flex-direction:column;line-height:1.05;padding-right:14px;margin-right:14px;border-right:1px solid var(--hair);}
+.aimail .ds-item b{font-size:15px;font-weight:700;}
+.aimail .ds-item span{font-size:10px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.03em;}
+.aimail .ds-tg{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--accent);font-weight:600;}
+.aimail .ds-tg svg{width:13px;height:13px;}
+.aimail .dock-chat{flex:1;min-height:0;display:flex;}
+.aimail .dock-chat iframe{flex:1;width:100%;height:100%;border:0;background:var(--bg);}
+
+/* sparkle icon helper for inline use */
+.aimail svg.spk{width:1em;height:1em;}
