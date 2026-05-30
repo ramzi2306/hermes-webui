@@ -1,0 +1,21 @@
+# Himalaya config for contact@ramzi.digital
+# Copy to ~/.config/himalaya/config.toml inside the agent container
+
+[accounts.ramzi]
+default = true
+email = "contact@ramzi.digital"
+display-name = "Ramzi"
+
+backend.type = "imap"
+backend.host = "imap.hostinger.com"
+backend.port = 993
+backend.encryption.type = "tls"
+backend.auth.type = "password"
+backend.auth.raw = "YOUR_EMAIL_PASSWORD_HERE"
+
+message.send.backend.type = "smtp"
+message.send.backend.host = "smtp.hostinger.com"
+message.send.backend.port = 587
+message.send.backend.encryption.type = "start-tls"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.raw = "YOUR_EMAIL_PASSWORD_HERE"
