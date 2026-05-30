@@ -4540,3 +4540,103 @@ main.main.showing-logs > #mainLogs{display:flex;}
 @media (min-width:1600px) {
   .composer-box{max-width:1600px;margin:0 auto;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EMAIL PANEL — iMessage-style inbox
+   ═══════════════════════════════════════════════════════════════════════════ */
+#email-panel { height: 100%; overflow: hidden; }
+.ep-container { display: flex; height: 100%; overflow: hidden; font-size: 14px; }
+
+/* Sidebar */
+.ep-sidebar { width: 320px; min-width: 260px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--sidebar); }
+.ep-sidebar-header { display: flex; align-items: center; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.ep-title { font-weight: 700; font-size: 16px; flex: 1; color: var(--text); }
+.ep-account-bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; min-height: 52px; }
+.ep-account-chip { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; border: 2px solid transparent; }
+.ep-account-chip:hover { transform: scale(1.08); }
+.ep-account-chip.active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(184,134,11,0.25); }
+.ep-no-accounts { width: 100%; }
+.ep-email-list { flex: 1; overflow-y: auto; }
+.ep-email-item { display: flex; gap: 10px; padding: 12px 14px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; }
+.ep-email-item:hover { background: rgba(0,0,0,0.04); }
+.ep-email-item.active { background: rgba(184,134,11,0.10); border-left: 3px solid var(--accent); }
+.ep-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ep-email-meta { flex: 1; min-width: 0; }
+.ep-email-from { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.ep-email-subject { color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 1px 0; }
+.ep-email-preview { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-email-time { font-size: 10px; color: var(--muted); white-space: nowrap; flex-shrink: 0; padding-top: 2px; }
+.ep-loading { padding: 24px; text-align: center; color: var(--muted); }
+.ep-spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ep-spin 0.7s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes ep-spin { to { transform: rotate(360deg); } }
+.ep-empty-list { padding: 24px; text-align: center; color: var(--muted); line-height: 1.6; }
+
+/* Main area */
+.ep-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.ep-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 12px; }
+.ep-empty-icon { font-size: 48px; opacity: 0.3; }
+.ep-empty-text { font-size: 15px; }
+
+/* Email detail */
+.ep-detail { display: flex; flex-direction: column; height: 100%; }
+.ep-detail-header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--sidebar); }
+.ep-detail-subject { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
+.ep-detail-from { display: flex; align-items: center; gap: 10px; }
+.ep-detail-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ep-detail-from-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.ep-detail-from-email { font-size: 11px; color: var(--muted); }
+.ep-detail-date { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+/* Conversation bubbles — iMessage style */
+.ep-conversation { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.ep-bubble { max-width: 70%; border-radius: 18px; padding: 12px 16px; line-height: 1.55; font-size: 14px; position: relative; }
+.ep-bubble-received { background: var(--sidebar); border: 1px solid var(--border); color: var(--text); border-bottom-left-radius: 4px; align-self: flex-start; }
+.ep-bubble-sent { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; align-self: flex-end; }
+.ep-bubble-draft { background: rgba(184,134,11,0.15); border: 1px dashed var(--accent); color: var(--text); }
+.ep-bubble-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; opacity: 0.7; }
+.ep-bubble-body { white-space: pre-wrap; word-break: break-word; }
+
+/* Reply area */
+.ep-reply-area { border-top: 1px solid var(--border); padding: 14px 16px; background: var(--sidebar); display: flex; flex-direction: column; gap: 10px; }
+.ep-ai-bar { display: flex; gap: 8px; }
+.ep-ai-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 20px; font-size: 13px; background: var(--bg); color: var(--text); outline: none; }
+.ep-ai-input:focus { border-color: var(--accent); }
+.ep-reply-textarea { width: 100%; min-height: 90px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 13px; background: var(--bg); color: var(--text); resize: vertical; font-family: inherit; outline: none; }
+.ep-reply-textarea:focus { border-color: var(--accent); }
+.ep-reply-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Buttons */
+.ep-btn { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; cursor: pointer; background: var(--bg); color: var(--text); transition: background 0.15s; font-family: inherit; }
+.ep-btn:hover { background: rgba(0,0,0,0.06); }
+.ep-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.ep-btn-primary:hover { filter: brightness(1.1); }
+.ep-btn-ai { background: linear-gradient(135deg, #6c47ff, #b8860b); color: #fff; border: none; font-weight: 600; }
+.ep-btn-ai:hover { filter: brightness(1.15); }
+.ep-btn-danger { background: #e53935; color: #fff; border-color: #e53935; }
+.ep-btn-icon { padding: 6px 10px; font-size: 15px; border-radius: 8px; }
+.ep-btn-sm { padding: 4px 10px; font-size: 12px; }
+.ep-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Modal */
+.ep-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.ep-modal { background: var(--bg); border-radius: 16px; width: 100%; max-width: 520px; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+.ep-modal-compose { max-width: 600px; }
+.ep-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 16px; }
+.ep-modal-body { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.ep-account-row { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--sidebar); border-radius: 10px; }
+.ep-account-info { flex: 1; font-size: 13px; }
+.ep-add-account-form { border-top: 1px solid var(--border); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.ep-add-account-form h4 { font-size: 14px; font-weight: 700; color: var(--text); }
+.ep-input { padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--bg); color: var(--text); width: 100%; outline: none; font-family: inherit; }
+.ep-input:focus { border-color: var(--accent); }
+.ep-input-sm { width: 90px; }
+.ep-form-row { display: flex; gap: 8px; }
+.ep-compose-textarea { width: 100%; min-height: 160px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--bg); color: var(--text); resize: vertical; font-family: inherit; outline: none; }
+.ep-compose-textarea:focus { border-color: var(--accent); }
+
+@media (max-width: 700px) {
+  .ep-sidebar { width: 100%; border-right: none; }
+  .ep-main { display: none; }
+  .ep-container.show-detail .ep-sidebar { display: none; }
+  .ep-container.show-detail .ep-main { display: flex; }
+}

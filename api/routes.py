@@ -3940,6 +3940,19 @@ def handle_get(handler, parsed) -> bool:
         except Exception as exc:
             return _serve_shell_unavailable(handler, exc)
 
+    # -------------------------------------------------------------------------
+    # EMAIL GET ROUTES
+    # -------------------------------------------------------------------------
+    if parsed.path == "/api/email/accounts":
+        try:
+            from api.email_handler import load_email_accounts
+            accounts = load_email_accounts()
+            safe = [{k: v for k, v in a.items() if k != "password"} for a in accounts]
+            return j(handler, {"accounts": safe})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+    # -------------------------------------------------------------------------
+
     if parsed.path == "/login":
         _settings = load_settings()
         _bn = _html.escape(_settings.get("bot_name") or "Hermes")
@@ -6865,6 +6878,64 @@ def handle_post(handler, parsed) -> bool:
         except Exception as e:
             logger.exception("rollback/restore failed")
             return bad(handler, str(e), status=500)
+
+    # -------------------------------------------------------------------------
+    # EMAIL ROUTES (POST)
+    # -------------------------------------------------------------------------
+    if parsed.path == "/api/email/accounts":
+        try:
+            from api.email_handler import save_email_accounts, load_email_accounts
+            accounts = body.get("accounts", [])
+            save_email_accounts(accounts)
+            return j(handler, {"ok": True})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/fetch":
+        try:
+            from api.email_handler import fetch_emails, load_email_accounts
+            account_email = body.get("account_email")
+            folder = body.get("folder", "INBOX")
+            limit = int(body.get("limit", 30))
+            accounts = load_email_accounts()
+            account = next((a for a in accounts if a["email"] == account_email), None)
+            if not account:
+                return bad(handler, "Account not found", status=404)
+            emails = fetch_emails(account, folder, limit)
+            return j(handler, {"emails": emails})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/send":
+        try:
+            from api.email_handler import send_email, load_email_accounts
+            account_email = body.get("account_email")
+            accounts = load_email_accounts()
+            account = next((a for a in accounts if a["email"] == account_email), None)
+            if not account:
+                return bad(handler, "Account not found", status=404)
+            send_email(
+                account,
+                to=body.get("to", ""),
+                subject=body.get("subject", ""),
+                body=body.get("body", ""),
+                reply_to_message_id=body.get("reply_to_message_id"),
+            )
+            return j(handler, {"ok": True})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    if parsed.path == "/api/email/draft":
+        try:
+            from api.email_handler import generate_ai_draft
+            email_data = body.get("email", {})
+            instruction = body.get("instruction", "")
+            draft = generate_ai_draft(email_data, instruction)
+            return j(handler, {"draft": draft})
+        except Exception as e:
+            return bad(handler, str(e), status=500)
+
+    # -------------------------------------------------------------------------
 
     return False  # 404
 
