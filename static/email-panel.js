@@ -307,32 +307,28 @@
   }
 
   // ─── Embedded real Hermes chat (dock body) ──────────────────────────────────
-  async function ensureEmailSession() {
-    if (S.emailSessionId) return S.emailSessionId;
-    const stored = localStorage.getItem("hermes_email_session");
-    if (stored) { S.emailSessionId = stored; return stored; }
-    const r = await apiPost("/api/session/new", { profile: S.profile });
-    const sid = r.session_id || r.session?.session_id || r.id;
-    S.emailSessionId = sid; if (sid) localStorage.setItem("hermes_email_session", sid);
-    return sid;
-  }
-  async function initHermesChat() {
+  function initHermesChat() {
     const frame = document.getElementById("aim-hermes-frame");
     if (!frame || frame.dataset.loaded === "1") return;
-    try {
-      const sid = await ensureEmailSession();
-      if (!sid) return;
-      frame.dataset.loaded = "1";
-      frame.src = apiUrl("session/" + encodeURIComponent(sid));
-      frame.addEventListener("load", () => {
-        try {
-          const doc = frame.contentDocument; if (!doc) return;
-          const st = doc.createElement("style");
-          st.textContent = `nav.rail,aside.sidebar,.app-titlebar,.mobile-nav,#mobileOverlay,.rail,.titlebar{display:none!important;}.layout{grid-template-columns:1fr!important;display:block!important;}main.main,.main{width:100%!important;margin:0!important;}html,body{overflow:hidden!important;}`;
-          doc.head.appendChild(st);
-        } catch {}
-      }, { once: true });
-    } catch {}
+    frame.dataset.loaded = "1";
+    // Load the app ROOT — it auto-creates a valid session (no "session not
+    // available" from stale ids). Chrome is hidden via injected CSS so only
+    // the chat shows, and the layout is forced to fill the iframe height.
+    frame.src = apiUrl("");
+    frame.addEventListener("load", () => {
+      try {
+        const doc = frame.contentDocument; if (!doc) return;
+        const st = doc.createElement("style");
+        st.textContent = `
+          nav.rail, aside.sidebar, .app-titlebar, .mobile-nav, #mobileOverlay,
+          .rail, .titlebar, .window-controls { display:none !important; }
+          html, body { height:100% !important; max-height:100% !important; overflow:hidden !important; margin:0 !important; }
+          .layout { grid-template-columns:1fr !important; display:flex !important; height:100% !important; max-height:100% !important; }
+          main.main, .main { width:100% !important; flex:1 1 auto !important; min-height:0 !important; margin:0 !important; height:100% !important; }
+        `;
+        doc.head.appendChild(st);
+      } catch {}
+    }, { once: true });
   }
 
   // ─── Data loading ───────────────────────────────────────────────────────────
