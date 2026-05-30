@@ -102,8 +102,6 @@
       center.replaceWith(tmp.firstElementChild);
     }
     // Do NOT rebuild the right column — keep the Hermes chat iframe alive.
-    const discuss = document.getElementById("ep3-discuss");
-    if (discuss) discuss.disabled = !S.activeThread;
     resizeFrames(document.getElementById("ep3-conversation"));
     attachThreadViewEvents();
   }
@@ -291,8 +289,7 @@
     return `
       <div class="ep3-col ep3-agent-chat">
         <div class="ep3-chat-head">
-          <span class="ep3-chat-title">🤖 Hermes</span>
-          <button class="ep3-btn ep3-btn-sm" id="ep3-discuss" ${!t ? "disabled" : ""}>↳ Discuss this thread</button>
+          <span class="ep3-chat-title">🤖 Hermes — mailbox assistant</span>
         </div>
         <iframe id="ep3-hermes-frame" class="ep3-hermes-frame" title="Hermes chat"></iframe>
       </div>`;
