@@ -18,7 +18,13 @@ services:
       - HERMES_AGENT_URL=http://hermesstack-hermesagent-1qi1ft:8642
       - HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD}
       - HERMES_SKIP_CHMOD=1
+    networks:
+      - dokploy-network
 
 volumes:
   webui-data:
     driver: local
+
+networks:
+  dokploy-network:
+    external: true
